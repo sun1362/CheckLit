@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -24,6 +27,35 @@ const formatCurrency = (amount: number) =>
   }).format(amount);
 
 const MAX_BUDGET = 1_000_000;
+
+const shoppingListSchema = z.object({
+  listTitle: z
+    .string()
+    .trim()
+    .min(1, 'Enter a title for your shopping list.')
+    .max(150, 'The list title cannot exceed 150 characters.'),
+  storeName: z.string().trim().max(150, 'Store name cannot exceed 150 characters.'),
+  targetDate: z.string(),
+  budget: z.string().refine(
+    (value) =>
+      value.trim() === '' ||
+      (Number.isFinite(Number(value)) &&
+        Number(value) >= 0 &&
+        Number(value) <= MAX_BUDGET),
+    'Budget must be between ₱0 and ₱1,000,000, or left blank.'
+  ),
+  notes: z.string().max(2000, 'Notes cannot exceed 2000 characters.'),
+});
+
+type ShoppingListFormValues = z.infer<typeof shoppingListSchema>;
+
+const defaultListFormValues: ShoppingListFormValues = {
+  listTitle: '',
+  storeName: '',
+  targetDate: '',
+  budget: '',
+  notes: '',
+};
 
 const roundCurrency = (amount: number) =>
   Math.round((amount + Number.EPSILON) * 100) / 100;
@@ -68,24 +100,27 @@ export const CreateListPage = () => {
     error: listsError,
   } = useShoppingLists();
 
-  const [listTitle, setListTitle] = useState('');
-  const [storeName, setStoreName] = useState('');
-  const [targetDate, setTargetDate] = useState('');
-  const [budget, setBudget] = useState('');
-  const [notes, setNotes] = useState('');
+  const {
+    register,
+    reset,
+    watch,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<ShoppingListFormValues>({
+    resolver: zodResolver(shoppingListSchema),
+    defaultValues: defaultListFormValues,
+    mode: 'onBlur',
+  });
+
+  const budget = watch('budget');
   const [selectedItems, setSelectedItems] = useState<ShoppingItem[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [initializedListId, setInitializedListId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isEditMode) {
       if (initializedListId !== null) {
-        setListTitle('');
-        setStoreName('');
-        setTargetDate('');
-        setBudget('');
-        setNotes('');
+        reset(defaultListFormValues);
         setSelectedItems([]);
         setFormError(null);
         setInitializedListId(null);
@@ -105,11 +140,13 @@ export const CreateListPage = () => {
       return;
     }
 
-    setListTitle(existing.title);
-    setStoreName(existing.store || '');
-    setTargetDate(existing.targetDate || '');
-    setBudget(existing.budget > 0 ? String(existing.budget) : '');
-    setNotes(existing.notes || '');
+    reset({
+      listTitle: existing.title,
+      storeName: existing.store || '',
+      targetDate: existing.targetDate || '',
+      budget: existing.budget > 0 ? String(existing.budget) : '',
+      notes: existing.notes || '',
+    });
     setSelectedItems(
       existing.items.map((item) => ({
         ...item,
@@ -118,7 +155,7 @@ export const CreateListPage = () => {
     );
     setFormError(null);
     setInitializedListId(id);
-  }, [id, isEditMode, lists, listsLoading, initializedListId]);
+  }, [id, isEditMode, lists, listsLoading, initializedListId, reset]);
 
   const selectedItemsWithTotals = useMemo(
     () =>
@@ -237,27 +274,19 @@ export const CreateListPage = () => {
     );
   };
 
-  const handleSaveList = async () => {
+  const handleSaveList = async (values: ShoppingListFormValues) => {
     setFormError(null);
 
-    if (!listTitle.trim()) {
-      setFormError('Enter a title for your shopping list.');
-      return;
-    }
+    const parsedBudget = values.budget.trim() === '' ? null : Number(values.budget);
 
-    if (listTitle.trim().length > 150) {
-      setFormError('The list title cannot exceed 150 characters.');
-      return;
-    }
-
-    if (budgetValue !== null && budgetValue > MAX_BUDGET) {
+    if (parsedBudget !== null && parsedBudget > MAX_BUDGET) {
       setFormError('The budget cannot exceed ₱1,000,000.');
       return;
     }
 
     if (
-      budgetValue !== null &&
-      (!Number.isFinite(budgetValue) || budgetValue < 0)
+      parsedBudget !== null &&
+      (!Number.isFinite(parsedBudget) || parsedBudget < 0)
     ) {
       setFormError('Enter a valid non-negative budget or leave it blank.');
       return;
@@ -283,19 +312,17 @@ export const CreateListPage = () => {
       return;
     }
 
-    setIsSubmitting(true);
-
     const itemsToSave = selectedItemsWithTotals.map((item) => ({
       ...item,
       totalPrice: roundCurrency(item.unitPrice * item.quantity),
     }));
 
     const payload = {
-      title: listTitle.trim(),
-      store: storeName.trim(),
-      targetDate,
-      budget: budgetValue ?? 0,
-      notes: notes.trim(),
+      title: values.listTitle.trim(),
+      store: values.storeName.trim(),
+      targetDate: values.targetDate,
+      budget: parsedBudget ?? 0,
+      notes: values.notes.trim(),
       items: itemsToSave,
       totalCost: grandTotalCost,
       status: calculateStatus(itemsToSave),
@@ -315,8 +342,6 @@ export const CreateListPage = () => {
           ? error.message
           : 'Unable to save the shopping list.'
       );
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
@@ -353,7 +378,11 @@ export const CreateListPage = () => {
   const visibleProductError = productsError || listsError;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6">
+    <form
+      noValidate
+      onSubmit={handleSubmit(handleSaveList)}
+      className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6"
+    >
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <Link
@@ -372,8 +401,7 @@ export const CreateListPage = () => {
         </div>
 
         <button
-          type="button"
-          onClick={handleSaveList}
+          type="submit"
           disabled={isSubmitting || isMutating}
           className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
@@ -423,13 +451,18 @@ export const CreateListPage = () => {
           </label>
           <input
             id="list-title"
-            value={listTitle}
-            onChange={(event) => setListTitle(event.target.value)}
+            {...register('listTitle')}
             maxLength={150}
             required
             placeholder="Weekly grocery list"
+            aria-invalid={Boolean(errors.listTitle)}
             className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
           />
+          {errors.listTitle?.message && (
+            <p role="alert" className="mt-1 text-xs text-red-600">
+              {errors.listTitle.message}
+            </p>
+          )}
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -442,12 +475,17 @@ export const CreateListPage = () => {
           </label>
           <input
             id="store-name"
-            value={storeName}
-            onChange={(event) => setStoreName(event.target.value)}
+            {...register('storeName')}
             maxLength={150}
             placeholder="Optional"
+            aria-invalid={Boolean(errors.storeName)}
             className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
           />
+          {errors.storeName?.message && (
+            <p role="alert" className="mt-1 text-xs text-red-600">
+              {errors.storeName.message}
+            </p>
+          )}
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -461,10 +499,14 @@ export const CreateListPage = () => {
           <input
             id="target-date"
             type="date"
-            value={targetDate}
-            onChange={(event) => setTargetDate(event.target.value)}
+            {...register('targetDate')}
             className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
           />
+          {errors.targetDate?.message && (
+            <p role="alert" className="mt-1 text-xs text-red-600">
+              {errors.targetDate.message}
+            </p>
+          )}
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -480,19 +522,17 @@ export const CreateListPage = () => {
             min="0"
             max={MAX_BUDGET}
             step="0.01"
-            value={budget}
-            onChange={(event) => setBudget(event.target.value)}
+            {...register('budget')}
             placeholder="No budget"
             aria-describedby="budget-limit-note"
+            aria-invalid={Boolean(errors.budget)}
             className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
           />
           <p
             id="budget-limit-note"
-            className={`mt-2 text-xs ${budgetValue !== null && budgetValue > MAX_BUDGET ? 'text-red-600' : 'text-slate-500'}`}
+            className={`mt-2 text-xs ${errors.budget ? 'text-red-600' : 'text-slate-500'}`}
           >
-            {budgetValue !== null && budgetValue > MAX_BUDGET
-              ? 'Budget cannot exceed ₱1,000,000.'
-              : 'Optional. Maximum budget: ₱1,000,000.'}
+            {errors.budget?.message || 'Optional. Maximum budget: ₱1,000,000.'}
           </p>
         </div>
       </section>
@@ -506,12 +546,18 @@ export const CreateListPage = () => {
         </label>
         <textarea
           id="list-notes"
-          value={notes}
-          onChange={(event) => setNotes(event.target.value)}
+          {...register('notes')}
           rows={2}
+          maxLength={2000}
           placeholder="Optional shopping notes"
+          aria-invalid={Boolean(errors.notes)}
           className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
         />
+        {errors.notes?.message && (
+          <p role="alert" className="mt-1 text-xs text-red-600">
+            {errors.notes.message}
+          </p>
+        )}
       </section>
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[1.15fr_0.85fr]">
@@ -779,8 +825,7 @@ export const CreateListPage = () => {
           </div>
 
           <button
-            type="button"
-            onClick={handleSaveList}
+            type="submit"
             disabled={isSubmitting || isMutating}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -793,6 +838,6 @@ export const CreateListPage = () => {
           </button>
         </section>
       </div>
-    </div>
+    </form>
   );
 };

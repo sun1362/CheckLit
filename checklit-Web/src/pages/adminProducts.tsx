@@ -1,8 +1,46 @@
 
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import type { Category, Product } from '../types';
 import { apiService, getApiErrorMessage } from '../services/api';
 import { useProducts } from '../hooks/useProducts';
+
+const productFormSchema = z.object({
+  name: z.string().trim().min(2, 'Product name must contain at least 2 characters.').max(100, 'Product name cannot exceed 100 characters.'),
+  category: z.string().trim().min(1, 'Select a category.'),
+  unitPrice: z.string().refine(
+    (value) => value.trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0,
+    'Enter a valid price that is zero or greater.'
+  ),
+  unit: z.string().trim().min(1, 'Enter a unit.').max(40, 'Unit cannot exceed 40 characters.'),
+  icon: z.string().max(100, 'Icon cannot exceed 100 characters.'),
+  description: z.string().max(500, 'Description cannot exceed 500 characters.'),
+});
+
+type ProductFormValues = z.infer<typeof productFormSchema>;
+
+const defaultProductValues: ProductFormValues = {
+  name: '',
+  category: '',
+  unitPrice: '',
+  unit: 'pcs',
+  icon: '',
+  description: '',
+};
+
+const categoryFormSchema = z.object({
+  name: z.string().trim().min(2, 'Category name must contain at least 2 characters.').max(50, 'Category name cannot exceed 50 characters.'),
+  description: z.string().max(250, 'Description cannot exceed 250 characters.'),
+});
+
+type CategoryFormValues = z.infer<typeof categoryFormSchema>;
+
+const defaultCategoryValues: CategoryFormValues = {
+  name: '',
+  description: '',
+};
 
 export function AdminProductsPage() {
   const {
@@ -21,29 +59,35 @@ export function AdminProductsPage() {
     clearMessages,
   } = useProducts();
 
-  const [productForm, setProductForm] = useState({
-    name: '',
-    category: '',
-    unitPrice: '',
-    unit: 'pcs',
-    icon: '',
-    description: '',
+  const {
+    register: registerProduct,
+    reset: resetProduct,
+    handleSubmit: handleProductSubmitForm,
+    formState: { errors: productFieldErrors, isSubmitting: savingProduct },
+  } = useForm<ProductFormValues>({
+    resolver: zodResolver(productFormSchema),
+    defaultValues: defaultProductValues,
+    mode: 'onBlur',
   });
 
   const [editingProductId, setEditingProductId] = useState('');
   const [productError, setProductError] = useState('');
   const [productMessage, setProductMessage] = useState('');
-  const [savingProduct, setSavingProduct] = useState(false);
 
-  const [categoryForm, setCategoryForm] = useState({
-    name: '',
-    description: '',
+  const {
+    register: registerCategory,
+    reset: resetCategory,
+    handleSubmit: handleCategorySubmitForm,
+    formState: { errors: categoryFieldErrors, isSubmitting: savingCategory },
+  } = useForm<CategoryFormValues>({
+    resolver: zodResolver(categoryFormSchema),
+    defaultValues: defaultCategoryValues,
+    mode: 'onBlur',
   });
 
   const [editingCategoryId, setEditingCategoryId] = useState('');
   const [categoryError, setCategoryError] = useState('');
   const [categoryMessage, setCategoryMessage] = useState('');
-  const [savingCategory, setSavingCategory] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -64,62 +108,30 @@ export function AdminProductsPage() {
   });
 
   const resetProductForm = () => {
-    setProductForm({
-      name: '',
-      category: '',
-      unitPrice: '',
-      unit: 'pcs',
-      icon: '',
-      description: '',
-    });
+    resetProduct(defaultProductValues);
     setEditingProductId('');
     setProductError('');
   };
 
   const resetCategoryForm = () => {
-    setCategoryForm({
-      name: '',
-      description: '',
-    });
+    resetCategory(defaultCategoryValues);
     setEditingCategoryId('');
     setCategoryError('');
   };
 
-  const handleProductSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleProductSubmit = async (values: ProductFormValues) => {
     setProductError('');
     setProductMessage('');
     clearMessages();
 
-    const name = productForm.name.trim();
-    const category = productForm.category.trim();
-    const unit = productForm.unit.trim();
-    const unitPrice = Number(productForm.unitPrice);
-
-    if (!name || !category || !unit) {
-      setProductError('Please complete the required product fields.');
-      return;
-    }
-
-    if (
-      productForm.unitPrice.trim() === '' ||
-      !Number.isFinite(unitPrice) ||
-      unitPrice < 0
-    ) {
-      setProductError('Enter a valid unit price that is zero or greater.');
-      return;
-    }
-
-    setSavingProduct(true);
-
     try {
       const payload = {
-        name,
-        category,
-        unitPrice,
-        unit,
-        icon: productForm.icon.trim(),
-        description: productForm.description.trim(),
+        name: values.name.trim(),
+        category: values.category.trim(),
+        unitPrice: Number(values.unitPrice),
+        unit: values.unit.trim(),
+        icon: values.icon.trim(),
+        description: values.description.trim(),
       };
 
       if (editingProductId) {
@@ -134,14 +146,12 @@ export function AdminProductsPage() {
       await fetchProducts();
     } catch (err) {
       setProductError(getApiErrorMessage(err, 'Unable to save the product.'));
-    } finally {
-      setSavingProduct(false);
     }
   };
 
   const startProductEdit = (product: Product) => {
     setEditingProductId(product.id || product._id || '');
-    setProductForm({
+    resetProduct({
       name: product.name,
       category: product.category,
       unitPrice: String(product.unitPrice),
@@ -183,35 +193,23 @@ export function AdminProductsPage() {
     }
   };
 
-  const handleCategorySubmit = async (
-    event: FormEvent<HTMLFormElement>
-  ) => {
-    event.preventDefault();
+  const handleCategorySubmit = async (values: CategoryFormValues) => {
     setCategoryError('');
     setCategoryMessage('');
-
-    const name = categoryForm.name.trim();
-
-    if (name.length < 2) {
-      setCategoryError('Category name must contain at least 2 characters.');
-      return;
-    }
-
-    setSavingCategory(true);
 
     try {
       if (editingCategoryId) {
         await apiService.updateCategory(editingCategoryId, {
-          name,
-          description: categoryForm.description.trim(),
+          name: values.name.trim(),
+          description: values.description.trim(),
         });
         setCategoryMessage(
           'Category updated. Products using this category have been synchronized.'
         );
       } else {
         await apiService.addCategory({
-          name,
-          description: categoryForm.description.trim(),
+          name: values.name.trim(),
+          description: values.description.trim(),
         });
         setCategoryMessage('Category added successfully.');
       }
@@ -222,14 +220,12 @@ export function AdminProductsPage() {
       setCategoryError(
         getApiErrorMessage(err, 'Unable to save the category.')
       );
-    } finally {
-      setSavingCategory(false);
     }
   };
 
   const startCategoryEdit = (category: Category) => {
     setEditingCategoryId(category.id || category._id || '');
-    setCategoryForm({
+    resetCategory({
       name: category.name,
       description: category.description ?? '',
     });
@@ -343,24 +339,23 @@ export function AdminProductsPage() {
             </p>
           )}
 
-          <form onSubmit={handleProductSubmit} className="space-y-4">
+          <form noValidate onSubmit={handleProductSubmitForm(handleProductSubmit)} className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-sm font-medium text-gray-700">
                   Product Name *
                 </span>
                 <input
+                  {...registerProduct('name')}
                   required
-                  value={productForm.name}
-                  onChange={(event) =>
-                    setProductForm((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
+                  maxLength={100}
                   placeholder="Enter product name"
+                  aria-invalid={Boolean(productFieldErrors.name)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
                 />
+                {productFieldErrors.name?.message && (
+                  <span role="alert" className="mt-1 block text-xs text-red-600">{productFieldErrors.name.message}</span>
+                )}
               </label>
 
               <label className="block">
@@ -368,15 +363,10 @@ export function AdminProductsPage() {
                   Category *
                 </span>
                 <select
+                  {...registerProduct('category')}
                   required
-                  value={productForm.category}
-                  onChange={(event) =>
-                    setProductForm((current) => ({
-                      ...current,
-                      category: event.target.value,
-                    }))
-                  }
                   disabled={loadingCategories || categoryRecords.length === 0}
+                  aria-invalid={Boolean(productFieldErrors.category)}
                   className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
                 >
                   <option value="">Select a category</option>
@@ -389,6 +379,9 @@ export function AdminProductsPage() {
                     </option>
                   ))}
                 </select>
+                {productFieldErrors.category?.message && (
+                  <span role="alert" className="mt-1 block text-xs text-red-600">{productFieldErrors.category.message}</span>
+                )}
                 {categoryRecords.length === 0 && !loadingCategories && (
                   <span className="mt-1 block text-xs text-gray-500">
                     Add a category before creating a product.
@@ -401,20 +394,18 @@ export function AdminProductsPage() {
                   Unit Price *
                 </span>
                 <input
+                  {...registerProduct('unitPrice')}
                   required
                   type="number"
                   min="0"
                   step="0.01"
-                  value={productForm.unitPrice}
-                  onChange={(event) =>
-                    setProductForm((current) => ({
-                      ...current,
-                      unitPrice: event.target.value,
-                    }))
-                  }
                   placeholder="0.00"
+                  aria-invalid={Boolean(productFieldErrors.unitPrice)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
                 />
+                {productFieldErrors.unitPrice?.message && (
+                  <span role="alert" className="mt-1 block text-xs text-red-600">{productFieldErrors.unitPrice.message}</span>
+                )}
               </label>
 
               <label className="block">
@@ -422,17 +413,16 @@ export function AdminProductsPage() {
                   Unit *
                 </span>
                 <input
+                  {...registerProduct('unit')}
                   required
-                  value={productForm.unit}
-                  onChange={(event) =>
-                    setProductForm((current) => ({
-                      ...current,
-                      unit: event.target.value,
-                    }))
-                  }
+                  maxLength={40}
                   placeholder="pcs, kg, pack, bottle"
+                  aria-invalid={Boolean(productFieldErrors.unit)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
                 />
+                {productFieldErrors.unit?.message && (
+                  <span role="alert" className="mt-1 block text-xs text-red-600">{productFieldErrors.unit.message}</span>
+                )}
               </label>
 
               <label className="block">
@@ -440,16 +430,15 @@ export function AdminProductsPage() {
                   Icon (optional)
                 </span>
                 <input
-                  value={productForm.icon}
-                  onChange={(event) =>
-                    setProductForm((current) => ({
-                      ...current,
-                      icon: event.target.value,
-                    }))
-                  }
+                  {...registerProduct('icon')}
+                  maxLength={100}
                   placeholder="Emoji or icon value"
+                  aria-invalid={Boolean(productFieldErrors.icon)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
                 />
+                {productFieldErrors.icon?.message && (
+                  <span role="alert" className="mt-1 block text-xs text-red-600">{productFieldErrors.icon.message}</span>
+                )}
               </label>
 
               <label className="block">
@@ -457,16 +446,15 @@ export function AdminProductsPage() {
                   Description (optional)
                 </span>
                 <input
-                  value={productForm.description}
-                  onChange={(event) =>
-                    setProductForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
+                  {...registerProduct('description')}
+                  maxLength={500}
                   placeholder="Product description"
+                  aria-invalid={Boolean(productFieldErrors.description)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
                 />
+                {productFieldErrors.description?.message && (
+                  <span role="alert" className="mt-1 block text-xs text-red-600">{productFieldErrors.description.message}</span>
+                )}
               </label>
             </div>
 
@@ -524,26 +512,24 @@ export function AdminProductsPage() {
             </p>
           )}
 
-          <form onSubmit={handleCategorySubmit} className="mb-6 space-y-4">
+          <form noValidate onSubmit={handleCategorySubmitForm(handleCategorySubmit)} className="mb-6 space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-sm font-medium text-gray-700">
                   Category Name *
                 </span>
                 <input
+                  {...registerCategory('name')}
                   required
                   minLength={2}
                   maxLength={50}
-                  value={categoryForm.name}
-                  onChange={(event) =>
-                    setCategoryForm((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
                   placeholder="Enter category name"
+                  aria-invalid={Boolean(categoryFieldErrors.name)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
                 />
+                {categoryFieldErrors.name?.message && (
+                  <span role="alert" className="mt-1 block text-xs text-red-600">{categoryFieldErrors.name.message}</span>
+                )}
               </label>
 
               <label className="block">
@@ -551,17 +537,15 @@ export function AdminProductsPage() {
                   Description (optional)
                 </span>
                 <input
+                  {...registerCategory('description')}
                   maxLength={250}
-                  value={categoryForm.description}
-                  onChange={(event) =>
-                    setCategoryForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
                   placeholder="Describe this category"
+                  aria-invalid={Boolean(categoryFieldErrors.description)}
                   className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
                 />
+                {categoryFieldErrors.description?.message && (
+                  <span role="alert" className="mt-1 block text-xs text-red-600">{categoryFieldErrors.description.message}</span>
+                )}
               </label>
             </div>
 
