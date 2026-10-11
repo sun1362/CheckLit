@@ -1,390 +1,542 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useShoppingLists } from '../hooks/useShoppingLists';
-import type { ShoppingList, ShoppingItem, ProductCategory } from '../types';
-import { ConfirmationModal } from '../components/ConfirmationModal';
+
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
-  CheckSquare,
-  Square,
-  Trash2,
-  Printer,
-  Store,
-  Calendar,
+  AlertCircle,
+  CalendarDays,
   CheckCircle2,
-  AlertTriangle,
+  Circle,
+  Download,
+  LoaderCircle,
+  Printer,
   ShoppingBag,
-  Sparkles,
-  Edit3
+  Store,
+  Trash2,
+  Pencil,
+  RefreshCw,
 } from 'lucide-react';
+import { useShoppingLists } from '../hooks/useShoppingLists';
+import type { ShoppingItem, ShoppingList } from '../types';
+import { ConfirmationModal } from '../components/ConfirmationModal';
 
-export const ListDetailsPage: React.FC = () => {
+const formatCurrency = (amount: number) =>
+  new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+  }).format(amount);
+
+const getListId = (list: ShoppingList) => list.id || list._id || '';
+
+const escapeCsv = (value: unknown) => {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
+};
+
+export const ListDetailsPage = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { lists, toggleItemCompletion, deleteList, updateList, loading, successMessage } = useShoppingLists();
 
-  const [currentList, setCurrentList] = useState<ShoppingList | null>(null);
+  const {
+    lists,
+    loading,
+    isMutating,
+    error,
+    successMessage,
+    fetchLists,
+    toggleItemCompletion,
+    deleteList,
+  } = useShoppingLists();
+
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Sync current list from hook state or URL params
-  useEffect(() => {
-    if (id && lists.length > 0) {
-      const found = lists.find((l) => l.id === id || l._id === id);
-      if (found) {
-        setCurrentList(found);
-      }
-    }
-  }, [id, lists]);
+  const currentList = useMemo(
+    () => lists.find((list) => list.id === id || list._id === id) ?? null,
+    [lists, id]
+  );
 
-  // Derived calculations during render
-  const items = currentList?.items || [];
-  const completedItems = useMemo(() => items.filter((i) => i.completed), [items]);
-  const completedCount = completedItems.length;
+  const items = currentList?.items ?? [];
+  const purchasedItems = items.filter((item) => item.completed);
+  const unpurchasedItems = items.filter((item) => !item.completed);
+
+  const purchasedCount = purchasedItems.length;
   const totalItemsCount = items.length;
-  const progressPct = totalItemsCount > 0 ? Math.round((completedCount / totalItemsCount) * 100) : 0;
+  const progress =
+    totalItemsCount > 0
+      ? Math.round((purchasedCount / totalItemsCount) * 100)
+      : 0;
 
-  const totalCost = currentList?.totalCost || 0;
-  const budget = currentList?.budget || 0;
-  const isOverBudget = budget > 0 && totalCost > budget;
+  const listTotal = currentList?.totalCost ?? 0;
 
-  // Group items by Category
+  const remainingCost = unpurchasedItems.reduce(
+    (total, item) => total + item.totalPrice,
+    0
+  );
+
+  const actualSpending = purchasedItems.reduce(
+    (total, item) => total + item.totalPrice,
+    0
+  );
+
+  const budget = currentList?.budget ?? 0;
+  const isOverBudget = budget > 0 && listTotal > budget;
+
   const groupedItems = useMemo(() => {
-    return items.reduce((acc, item) => {
-      const cat = item.category || 'Other';
-      if (!acc[cat]) acc[cat] = [];
-      acc[cat].push(item);
-      return acc;
-    }, {} as Record<ProductCategory | string, ShoppingItem[]>);
+    return items.reduce<Record<string, ShoppingItem[]>>((groups, item) => {
+      const category = item.category || 'Other';
+
+      if (!groups[category]) {
+        groups[category] = [];
+      }
+
+      groups[category].push(item);
+      return groups;
+    }, {});
   }, [items]);
 
-  // Toggle Checkbox Item Completion
   const handleToggle = async (itemId: string) => {
     if (!currentList) return;
-    await toggleItemCompletion(currentList.id, itemId);
-  };
 
-  // Toggle List Status
-  const handleStatusChange = async (newStatus: 'Pending' | 'In Progress' | 'Completed') => {
-    if (!currentList) return;
-    await updateList(currentList.id, { status: newStatus });
-  };
+    setActionError(null);
 
-  // Delete List Handler
-  const handleDeleteConfirm = async () => {
-    if (!currentList) return;
-    setIsDeleting(true);
     try {
-      await deleteList(currentList.id);
-      navigate('/');
-    } catch {
-      // Handled in hook
+      await toggleItemCompletion(getListId(currentList), itemId);
+    } catch (err) {
+      setActionError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to update the purchased status.'
+      );
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!currentList) return;
+
+    const listId = getListId(currentList);
+
+    setIsDeleting(true);
+    setActionError(null);
+
+    try {
+      await deleteList(listId);
+      setDeleteModalOpen(false);
+      navigate('/', { replace: true });
+    } catch (err) {
+      setActionError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to delete this shopping list.'
+      );
     } finally {
       setIsDeleting(false);
     }
   };
 
-  // Print Summary
-  const handlePrint = () => {
-    window.print();
+  const handleExportCsv = () => {
+    if (!currentList) return;
+
+    const rows = [
+      [
+        'List Title',
+        'Store',
+        'Category',
+        'Product',
+        'Quantity',
+        'Unit',
+        'Unit Price',
+        'Subtotal',
+        'Purchased',
+      ],
+      ...items.map((item) => [
+        currentList.title,
+        currentList.store,
+        item.category,
+        item.name,
+        item.quantity,
+        item.unit,
+        item.unitPrice.toFixed(2),
+        item.totalPrice.toFixed(2),
+        item.completed ? 'Yes' : 'No',
+      ]),
+      [],
+      ['List Total', '', '', '', '', '', '', listTotal.toFixed(2), ''],
+      ['Actual Spending', '', '', '', '', '', '', actualSpending.toFixed(2), ''],
+      ['Remaining Cost', '', '', '', '', '', '', remainingCost.toFixed(2), ''],
+      ['Budget', '', '', '', '', '', '', budget > 0 ? budget.toFixed(2) : 'Not set', ''],
+    ];
+
+    const csv = rows
+      .map((row) => row.map(escapeCsv).join(','))
+      .join('\r\n');
+
+    const blob = new Blob(['\uFEFF', csv], {
+      type: 'text/csv;charset=utf-8;',
+    });
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+
+    anchor.href = url;
+    anchor.download = `${currentList.title
+      .trim()
+      .replace(/[^a-z0-9_-]+/gi, '-') || 'shopping-list'}.csv`;
+
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   };
 
   if (loading && !currentList) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="text-center space-y-4">
-          <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-slate-500 font-medium text-sm">Loading shopping list details...</p>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="flex items-center gap-3 text-sm text-slate-600">
+          <LoaderCircle className="animate-spin" size={20} />
+          Loading shopping list...
         </div>
       </div>
     );
   }
 
-  if (!currentList && !loading) {
+  if (!currentList) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-3xl border border-slate-200 text-center max-w-md w-full space-y-4">
-          <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto" />
-          <h2 className="text-xl font-bold text-slate-800">Shopping List Not Found</h2>
-          <p className="text-slate-500 text-sm">
-            The shopping list you are looking for does not exist or has been removed.
-          </p>
-          <Link
-            to="/"
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white font-bold text-sm rounded-xl"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Return to Landing Page</span>
-          </Link>
-        </div>
+      <div className="mx-auto max-w-xl px-4 py-16 text-center">
+        <AlertCircle className="mx-auto text-amber-600" size={36} />
+        <h1 className="mt-4 text-xl font-semibold text-slate-900">
+          Shopping list unavailable
+        </h1>
+        <p className="mt-2 text-sm text-slate-600">
+          {error || 'The shopping list could not be found.'}
+        </p>
+        <button
+          type="button"
+          onClick={() => void fetchLists().catch(() => undefined)}
+          className="mt-5 inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          <RefreshCw size={16} />
+          Retry
+        </button>
+        <Link
+          to="/"
+          className="ml-2 mt-5 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700"
+        >
+          <ArrowLeft size={16} />
+          Home
+        </Link>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8 px-4 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6 print:max-w-none print:px-0 print:py-0">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center print:hidden">
+        <div>
+          <Link
+            to="/"
+            className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-emerald-700"
+          >
+            <ArrowLeft size={16} />
+            Back to Home
+          </Link>
 
-      {/* Printable Minimal Products List View (Visible ONLY when printing) */}
-      <div className="hidden print:block p-8 space-y-6 bg-white text-black font-sans">
-        <div className="border-b-2 border-slate-900 pb-4 flex justify-between items-end">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">{currentList?.title}</h1>
-            <p className="text-sm font-semibold text-slate-600 mt-1">
-              Store: {currentList?.store || 'General Grocery'} &bull; Date: {currentList?.targetDate}
-            </p>
-          </div>
-          <div className="text-right">
-            <span className="text-xs font-bold text-slate-500 uppercase block">Total Cost</span>
-            <span className="text-xl font-black text-slate-900">₱{totalCost.toFixed(2)}</span>
+          <h1 className="mt-3 break-words text-2xl font-bold text-slate-900">
+            {currentList.title}
+          </h1>
+
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-sm text-slate-500">
+            {currentList.store && (
+              <span className="flex items-center gap-1.5">
+                <Store size={15} />
+                {currentList.store}
+              </span>
+            )}
+
+            {currentList.targetDate && (
+              <span className="flex items-center gap-1.5">
+                <CalendarDays size={15} />
+                Target date: {currentList.targetDate}
+              </span>
+            )}
           </div>
         </div>
 
-        {/* Product Items Table for Print */}
-        <table className="w-full border-collapse text-left text-sm">
-          <thead>
-            <tr className="border-b-2 border-slate-300 text-slate-800 uppercase text-xs">
-              <th className="py-2.5 px-2 font-black w-10">[ ]</th>
-              <th className="py-2.5 px-2 font-black">Item Name</th>
-              <th className="py-2.5 px-2 font-black">Category</th>
-              <th className="py-2.5 px-2 font-black text-center">Qty / Unit</th>
-              <th className="py-2.5 px-2 font-black text-right">Unit Price</th>
-              <th className="py-2.5 px-2 font-black text-right">Subtotal</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {items.map((item) => (
-              <tr key={item.id} className="py-2">
-                <td className="py-2 px-2 text-slate-400 font-mono">[ ]</td>
-                <td className="py-2 px-2 font-bold text-slate-900">{item.name}</td>
-                <td className="py-2 px-2 text-slate-600">{item.category}</td>
-                <td className="py-2 px-2 text-center text-slate-800 font-semibold">{item.quantity} {item.unit}</td>
-                <td className="py-2 px-2 text-right text-slate-700">₱{item.unitPrice.toFixed(2)}</td>
-                <td className="py-2 px-2 text-right font-black text-slate-900">₱{item.totalPrice.toFixed(2)}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-slate-900 font-black text-base">
-              <td colSpan={5} className="py-3 px-2 text-right uppercase">Grand Total:</td>
-              <td className="py-3 px-2 text-right">₱{totalCost.toFixed(2)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      {/* Screen Interactive View (Hidden during printing) */}
-      <div className="max-w-5xl mx-auto space-y-8 print:hidden">
-
-        {/* Top Action Nav */}
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <button
-            onClick={() => navigate('/')}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-sm font-semibold transition-colors shadow-2xs"
+        <div className="flex flex-wrap gap-2">
+          <Link
+            to={`/edit/${getListId(currentList)}`}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to All Lists</span>
+            <Pencil size={16} />
+            Edit
+          </Link>
+
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Download size={16} />
+            Export CSV
           </button>
 
-          <div className="flex items-center gap-2">
-            <Link
-              to={`/edit/${currentList?.id}`}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl text-sm font-semibold transition-colors"
-            >
-              <Edit3 className="w-4 h-4" />
-              <span>Edit List</span>
-            </Link>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-sm font-medium text-white hover:bg-emerald-700"
+          >
+            <Printer size={16} />
+            Print / Save PDF
+          </button>
 
-            <button
-              onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 rounded-xl text-sm font-semibold transition-colors"
-              title="Print Product List"
-            >
-              <Printer className="w-4 h-4 text-emerald-600" />
-              <span>Print Products List</span>
-            </button>
+          <button
+            type="button"
+            onClick={() => setDeleteModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50"
+          >
+            <Trash2 size={16} />
+            Delete
+          </button>
+        </div>
+      </div>
 
-            <button
-              onClick={() => setDeleteModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-xl text-sm font-semibold transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-              <span>Delete List</span>
-            </button>
-          </div>
+      {successMessage && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 print:hidden"
+        >
+          <CheckCircle2 size={17} />
+          {successMessage}
+        </div>
+      )}
+
+      {(actionError || error) && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 print:hidden"
+        >
+          <AlertCircle className="mt-0.5 shrink-0" size={18} />
+          <span>{actionError || error}</span>
+        </div>
+      )}
+
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <p className="text-sm text-slate-500">List Total</p>
+          <p className="mt-2 text-2xl font-bold text-slate-900">
+            {formatCurrency(listTotal)}
+          </p>
         </div>
 
-        {/* Feedback Alerts */}
-        {successMessage && (
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-2xl flex items-center gap-3 text-sm font-medium">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-            <span>{successMessage}</span>
-          </div>
-        )}
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <p className="text-sm text-slate-500">Actual Spending</p>
+          <p className="mt-2 text-2xl font-bold text-emerald-700">
+            {formatCurrency(actualSpending)}
+          </p>
+        </div>
 
-        {/* List Header Details Card */}
-        <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200/90 shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-6">
-            <div className="space-y-2">
-              <div className="flex items-center gap-3">
-                <div className="p-3 bg-emerald-100 text-emerald-700 rounded-2xl">
-                  <ShoppingBag className="w-7 h-7" />
-                </div>
-                <div>
-                  <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">
-                    {currentList?.title}
-                  </h1>
-                  <div className="flex items-center gap-4 text-xs font-semibold text-slate-500 mt-1">
-                    <span className="flex items-center gap-1 text-slate-700">
-                      <Store className="w-3.5 h-3.5 text-emerald-600" />
-                      {currentList?.store || 'General Grocery'}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-                      Target: {currentList?.targetDate}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <p className="text-sm text-slate-500">Remaining Cost</p>
+          <p className="mt-2 text-2xl font-bold text-slate-900">
+            {formatCurrency(remainingCost)}
+          </p>
+        </div>
 
-            {/* Status Switcher & Edit Quick Action */}
-            <div className="flex items-center gap-3">
-              <Link
-                to={`/edit/${currentList?.id}`}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 rounded-lg text-xs font-bold transition-colors"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>Edit Items</span>
-              </Link>
-
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Status:</span>
-                <select
-                  value={currentList?.status}
-                  onChange={(e) => handleStatusChange(e.target.value as any)}
-                  className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-                >
-                  <option value="Pending">Pending</option>
-                  <option value="In Progress">In Progress</option>
-                  <option value="Completed">Completed</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {currentList?.notes && (
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-1">
-              <span className="font-bold text-slate-700 block">Notes & Shopping Instructions:</span>
-              <p>{currentList.notes}</p>
-            </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <p className="text-sm text-slate-500">Budget</p>
+          <p className="mt-2 text-2xl font-bold text-slate-900">
+            {budget > 0 ? formatCurrency(budget) : 'Not set'}
+          </p>
+          {budget > 0 && (
+            <p
+              className={`mt-1 text-xs ${isOverBudget ? 'text-red-600' : 'text-slate-500'}`}
+            >
+              {isOverBudget
+                ? `Over budget by ${formatCurrency(listTotal - budget)}`
+                : `${formatCurrency(budget - listTotal)} remaining`}
+            </p>
           )}
+        </div>
+      </section>
 
-          {/* Interactive In-Store Checklist Progress Bar */}
-          <div className="bg-emerald-50/70 border border-emerald-100 p-5 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between text-xs sm:text-sm font-bold text-emerald-950">
-              <span className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-emerald-600" />
-                <span>In-Store Grocery Checklist Progress</span>
-              </span>
-              <span>{completedCount} of {totalItemsCount} items picked ({progressPct}%)</span>
-            </div>
-            <div className="w-full h-3 bg-white rounded-full overflow-hidden p-0.5 border border-emerald-200">
-              <div
-                className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Cost & Budget Overview Widgets */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-slate-900 text-white p-4 rounded-2xl">
-              <span className="text-xs text-slate-400 font-semibold block uppercase tracking-wider">Calculated Total</span>
-              <span className="text-2xl font-black text-emerald-400">₱{totalCost.toFixed(2)}</span>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl">
-              <span className="text-xs text-slate-500 font-semibold block uppercase tracking-wider">Set Budget</span>
-              <span className="text-2xl font-black text-slate-800">
-                {budget > 0 ? `₱${budget.toFixed(2)}` : 'No Limit'}
-              </span>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl">
-              <span className="text-xs text-slate-500 font-semibold block uppercase tracking-wider">Budget Balance</span>
-              <span className={`text-2xl font-black ${isOverBudget ? 'text-red-600' : 'text-emerald-700'}`}>
-                {budget > 0 ? `₱${(budget - totalCost).toFixed(2)}` : 'N/A'}
-              </span>
-            </div>
+      {isOverBudget && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <AlertCircle className="mt-0.5 shrink-0" size={18} />
+          <div>
+            <p className="font-semibold">Budget exceeded</p>
+            <p className="mt-1">
+              Your list total exceeds the budget by{' '}
+              {formatCurrency(listTotal - budget)}. You can still manage and
+              purchase the selected items.
+            </p>
           </div>
         </div>
+      )}
 
-        {/* Categorized Food Ingredients Checklist */}
-        <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200/90 shadow-sm space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-            <h2 className="text-xl font-bold text-slate-800">
-              Categorized Items & Prices
+      <section className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">
+              Shopping Progress
             </h2>
-
-            <Link
-              to={`/edit/${currentList?.id}`}
-              className="inline-flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-800 rounded-xl text-xs font-bold transition-colors"
-            >
-              <Edit3 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Add / Remove Products</span>
-            </Link>
+            <p className="mt-1 text-sm text-slate-500">
+              {purchasedCount} of {totalItemsCount} products purchased
+            </p>
           </div>
 
-          <div className="space-y-8">
-            {Object.entries(groupedItems).map(([category, catItems]) => {
-              const categoryTotal = catItems.reduce((s, i) => s + i.totalPrice, 0);
+          <span className="text-sm font-semibold text-emerald-700">
+            {progress}%
+          </span>
+        </div>
+
+        <div
+          className="mt-4 h-2.5 overflow-hidden rounded-full bg-slate-100"
+          role="progressbar"
+          aria-valuenow={progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Shopping progress"
+        >
+          <div
+            className="h-full rounded-full bg-emerald-600 transition-all"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+
+        <div className="mt-4">
+          <span
+            className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+              currentList.status === 'Completed'
+                ? 'bg-emerald-100 text-emerald-800'
+                : currentList.status === 'In Progress'
+                  ? 'bg-blue-100 text-blue-800'
+                  : 'bg-amber-100 text-amber-800'
+            }`}
+          >
+            {currentList.status}
+          </span>
+        </div>
+      </section>
+
+      {currentList.notes && (
+        <section className="rounded-xl border border-slate-200 bg-white p-5">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Notes and Instructions
+          </h2>
+          <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600">
+            {currentList.notes}
+          </p>
+        </section>
+      )}
+
+      <section className="space-y-5 rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex items-center gap-2">
+          <ShoppingBag size={21} className="text-emerald-700" />
+          <h2 className="text-lg font-semibold text-slate-900">
+            Products
+          </h2>
+        </div>
+
+        {items.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-300 px-4 py-12 text-center">
+            <ShoppingBag className="mx-auto text-slate-300" size={30} />
+            <p className="mt-3 text-sm font-medium text-slate-700">
+              This list is empty
+            </p>
+            <p className="mt-1 text-sm text-slate-500">
+              Add products to this list when you are ready.
+            </p>
+            <Link
+              to={`/edit/${getListId(currentList)}`}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 print:hidden"
+            >
+              <Pencil size={16} />
+              Add Products
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-7">
+            {Object.entries(groupedItems).map(([category, categoryItems]) => {
+              const categoryTotal = categoryItems.reduce(
+                (total, item) => total + item.totalPrice,
+                0
+              );
 
               return (
-                <div key={category} className="space-y-3">
-                  <div className="flex items-center justify-between bg-slate-100/80 px-4 py-2 rounded-xl">
-                    <span className="text-sm font-extrabold text-slate-800 flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
+                <div key={category}>
+                  <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
+                    <h3 className="text-sm font-semibold text-slate-700">
                       {category}
-                    </span>
-                    <span className="text-xs font-bold text-slate-600">
-                      Category Total: ₱{categoryTotal.toFixed(2)}
+                    </h3>
+                    <span className="text-xs font-medium text-slate-500">
+                      {formatCurrency(categoryTotal)}
                     </span>
                   </div>
 
-                  <div className="divide-y divide-slate-100">
-                    {catItems.map((item) => (
+                  <div className="space-y-2">
+                    {categoryItems.map((item) => (
                       <div
                         key={item.id}
-                        onClick={() => handleToggle(item.id)}
-                        className={`py-3.5 px-3 rounded-xl flex items-center justify-between gap-4 cursor-pointer transition-colors ${
-                          item.completed ? 'bg-emerald-50/40 text-slate-400' : 'hover:bg-slate-50 text-slate-800'
+                        className={`flex items-center justify-between gap-4 rounded-lg border p-3 ${
+                          item.completed
+                            ? 'border-emerald-100 bg-emerald-50/50'
+                            : 'border-slate-200 bg-white'
                         }`}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <button
-                            type="button"
-                            className="text-emerald-600 focus:outline-none shrink-0"
-                          >
-                            {item.completed ? (
-                              <CheckSquare className="w-5 h-5 text-emerald-600" />
-                            ) : (
-                              <Square className="w-5 h-5 text-slate-300" />
-                            )}
-                          </button>
-                          <div>
-                            <span className={`text-sm font-bold block ${item.completed ? 'line-through text-slate-400' : ''}`}>
+                        <button
+                          type="button"
+                          onClick={() => void handleToggle(item.id)}
+                          disabled={isMutating}
+                          aria-pressed={item.completed}
+                          className="flex min-w-0 flex-1 items-start gap-3 text-left disabled:opacity-60 print:hidden"
+                        >
+                          {item.completed ? (
+                            <CheckCircle2
+                              className="mt-0.5 shrink-0 text-emerald-600"
+                              size={20}
+                            />
+                          ) : (
+                            <Circle
+                              className="mt-0.5 shrink-0 text-slate-400"
+                              size={20}
+                            />
+                          )}
+
+                          <span className="min-w-0">
+                            <span
+                              className={`block break-words text-sm font-medium ${
+                                item.completed
+                                  ? 'text-slate-500 line-through'
+                                  : 'text-slate-900'
+                              }`}
+                            >
                               {item.name}
                             </span>
-                            <span className="text-xs text-slate-500">
-                              Quantity: {item.quantity} {item.unit} &bull; ₱{item.unitPrice.toFixed(2)} each
+                            <span className="mt-1 block text-xs text-slate-500">
+                              Quantity: {item.quantity} {item.unit} ·{' '}
+                              {formatCurrency(item.unitPrice)} per {item.unit}
                             </span>
-                          </div>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          <span className={`text-sm font-black ${item.completed ? 'text-slate-400' : 'text-slate-900'}`}>
-                            ₱{item.totalPrice.toFixed(2)}
                           </span>
+                        </button>
+
+                        <span className="hidden shrink-0 text-sm text-slate-500 print:block">
+                          {item.completed ? 'Purchased' : 'Not purchased'}
+                        </span>
+
+                        <div className="shrink-0 text-right">
+                          <p
+                            className={`text-sm font-semibold ${
+                              item.completed
+                                ? 'text-emerald-700'
+                                : 'text-slate-900'
+                            }`}
+                          >
+                            {formatCurrency(item.totalPrice)}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {item.completed ? 'Purchased' : 'Remaining'}
+                          </p>
                         </div>
                       </div>
                     ))}
@@ -393,19 +545,21 @@ export const ListDetailsPage: React.FC = () => {
               );
             })}
           </div>
-        </div>
+        )}
+      </section>
 
-        {/* Delete Modal Confirmation */}
-        <ConfirmationModal
-          isOpen={deleteModalOpen}
-          title="Delete Shopping List"
-          message={`Are you sure you want to delete "${currentList?.title}"?`}
-          isLoading={isDeleting}
-          onConfirm={handleDeleteConfirm}
-          onCancel={() => setDeleteModalOpen(false)}
-        />
-
-      </div>
+      <ConfirmationModal
+        isOpen={deleteModalOpen}
+        title="Delete Shopping List"
+        message={`Are you sure you want to delete "${currentList.title}"? This action cannot be undone.`}
+        isLoading={isDeleting}
+        onConfirm={handleDelete}
+        onCancel={() => {
+          if (!isDeleting) {
+            setDeleteModalOpen(false);
+          }
+        }}
+      />
     </div>
   );
 };

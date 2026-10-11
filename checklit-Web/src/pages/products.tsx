@@ -1,89 +1,214 @@
-import React from 'react';
-import { useProducts } from '../hooks/useProducts';
-import { Search, Store } from 'lucide-react';
 
-export const ProductsPage: React.FC = () => {
-  const { filteredProducts, searchQuery, setSearchQuery, selectedCategory, setSelectedCategory, categories, loading } = useProducts();
+import { useProducts } from '../hooks/useProducts';
+
+export function ProductsPage() {
+  const {
+    filteredProducts,
+    searchQuery,
+    setSearchQuery,
+    selectedCategory,
+    setSelectedCategory,
+    categories,
+    loading,
+    error,
+    fetchProducts,
+    fetchCategories,
+  } = useProducts();
+
+  const handleRetry = async () => {
+    await Promise.allSettled([fetchProducts(), fetchCategories()]);
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto space-y-8">
+    <main className="min-h-screen bg-gray-50 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <header>
+          <p className="text-sm font-semibold uppercase tracking-wide text-green-700">
+            CheckLit Catalog
+          </p>
+          <h1 className="mt-2 text-3xl font-bold text-gray-900">
+            Browse Products
+          </h1>
+          <p className="mt-2 text-gray-600">
+            Browse available products and their current catalog prices before
+            adding them to your shopping list.
+          </p>
+        </header>
 
-        {/* Header */}
-        <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200/90 shadow-xs space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-emerald-100 text-emerald-700 rounded-2xl">
-              <Store className="w-8 h-8" />
-            </div>
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">
-                Grocery Products Catalog
-              </h1>
-              <p className="text-slate-500 text-sm mt-1">
-                Browse predefined food ingredients, category pricing, and default measurement units.
-              </p>
-            </div>
+        <section className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Matching Products</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900">
+              {filteredProducts.length}
+            </p>
           </div>
 
-          {/* Search & Filter */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
-            <div className="md:col-span-2 relative">
-              <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search food catalog by name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Available Categories</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900">
+              {Math.max(categories.length - 1, 0)}
+            </p>
+          </div>
+        </section>
 
-            <div className="flex items-center gap-2 overflow-x-auto">
-              <span className="text-xs font-bold text-slate-500 uppercase shrink-0">Cat:</span>
+        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
+          <div className="grid gap-4 md:grid-cols-[1fr_240px]">
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-gray-700">
+                Search products
+              </span>
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search by product name or description..."
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-gray-700">
+                Filter by category
+              </span>
               <select
                 value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value as any)}
-                className="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                onChange={(event) => setSelectedCategory(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
               >
-                {categories.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category === 'All' ? 'All Categories' : category}
+                  </option>
                 ))}
               </select>
-            </div>
+            </label>
           </div>
-        </div>
 
-        {/* Catalog Grid */}
-        {loading ? (
-          <div className="py-16 text-center space-y-4">
-            <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-slate-500 font-medium text-sm">Loading grocery catalog...</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {filteredProducts.map((p) => (
-              <div key={p.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-3">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-3xl p-2 bg-slate-50 rounded-xl">{p.icon || '🛒'}</span>
-                    <span className="text-[11px] font-extrabold px-2.5 py-1 bg-emerald-50 text-emerald-800 rounded-full">
-                      {p.category}
-                    </span>
-                  </div>
-                  <h3 className="text-base font-bold text-slate-800">{p.name}</h3>
-                  <p className="text-xs text-slate-500 leading-relaxed">{p.description || 'Fresh grocery ingredient'}</p>
-                </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-gray-500">
+              {selectedCategory === 'All'
+                ? 'Showing all available categories.'
+                : `Category: ${selectedCategory}`}
+            </p>
 
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
-                  <span className="text-xs text-slate-400 font-medium">Unit Price</span>
-                  <span className="text-lg font-black text-emerald-700">₱{p.unitPrice.toFixed(2)} / {p.unit}</span>
-                </div>
-              </div>
-            ))}
+            {(searchQuery || selectedCategory !== 'All') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('All');
+                }}
+                className="text-sm font-semibold text-green-700 hover:text-green-900"
+              >
+                Clear filters
+              </button>
+            )}
           </div>
+        </section>
+
+        {error && (
+          <section
+            role="alert"
+            className="rounded-xl border border-red-200 bg-red-50 p-4"
+          >
+            <p className="font-medium text-red-800">
+              Unable to load the catalog
+            </p>
+            <p className="mt-1 text-sm text-red-700">{error}</p>
+            <button
+              type="button"
+              onClick={() => void handleRetry()}
+              className="mt-3 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
+            >
+              Try Again
+            </button>
+          </section>
         )}
 
+        {loading ? (
+          <section className="rounded-xl border border-gray-200 bg-white px-6 py-16 text-center shadow-sm">
+            <p className="font-medium text-gray-700">Loading product catalog...</p>
+            <p className="mt-2 text-sm text-gray-500">
+              Retrieving products and categories from the server.
+            </p>
+          </section>
+        ) : filteredProducts.length === 0 ? (
+          <section className="rounded-xl border border-gray-200 bg-white px-6 py-16 text-center shadow-sm">
+            <div className="text-4xl" aria-hidden="true">
+              🛒
+            </div>
+            <h2 className="mt-4 text-lg font-semibold text-gray-900">
+              No products found
+            </h2>
+            <p className="mt-2 text-sm text-gray-500">
+              Try another search term or select a different category.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setSelectedCategory('All');
+              }}
+              className="mt-5 rounded-lg bg-green-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-800"
+            >
+              Show All Products
+            </button>
+          </section>
+        ) : (
+          <section>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Product Catalog
+              </h2>
+              <p className="text-sm text-gray-500">
+                {filteredProducts.length}{' '}
+                {filteredProducts.length === 1 ? 'product' : 'products'}
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {filteredProducts.map((product) => (
+                <article
+                  key={product.id || product._id}
+                  className="flex flex-col rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-green-50 text-2xl">
+                      {product.icon || '🛍️'}
+                    </div>
+                    <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+                      {product.category}
+                    </span>
+                  </div>
+
+                  <h3 className="mt-4 break-words text-lg font-semibold text-gray-900">
+                    {product.name}
+                  </h3>
+
+                  <p className="mt-2 min-h-10 flex-1 text-sm leading-5 text-gray-500">
+                    {product.description || 'No description available.'}
+                  </p>
+
+                  <div className="mt-5 border-t border-gray-100 pt-4">
+                    <p className="text-2xl font-bold text-green-800">
+                      ₱
+                      {product.unitPrice.toLocaleString('en-PH', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </p>
+                    <p className="mt-1 text-sm text-gray-500">
+                      per {product.unit}
+                    </p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
-    </div>
+    </main>
   );
-};
+}
+
+export default ProductsPage;

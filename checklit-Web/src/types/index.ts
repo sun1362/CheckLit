@@ -39,6 +39,15 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
+export interface Category {
+  id: string;
+  _id?: string;
+  name: string;
+  description: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Product {
   id: string;
   _id?: string;
@@ -54,6 +63,7 @@ export interface Product {
 
 export interface ShoppingItem {
   id: string;
+  _id?: string;
   productId?: string;
   name: string;
   category: ProductCategory;
@@ -81,10 +91,14 @@ export interface ShoppingList {
 }
 
 export interface UserProfile {
+  id?: string;
   name: string;
   email: string;
+  role?: UserRole;
   currency?: string;
   defaultBudget?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CategorySummary {

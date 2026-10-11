@@ -1,48 +1,75 @@
-import type { FC } from 'react';
-import { Link } from 'react-router-dom';
-import { ShoppingBag, Heart, CheckCircle2 } from 'lucide-react';
 
-export const Footer: FC = () => (
-  <footer className="mt-auto border-t border-slate-800 bg-slate-900 pb-8 pt-12 text-slate-300">
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-      <div className="grid grid-cols-1 gap-8 border-b border-slate-800 pb-8 md:grid-cols-4">
-        <div className="space-y-4 md:col-span-1">
-          <div className="flex items-center gap-2">
-            <div className="rounded-xl bg-emerald-500 p-2 text-slate-900"><ShoppingBag className="h-5 w-5" /></div>
-            <span className="text-xl font-bold tracking-tight text-white">CheckLit</span>
-          </div>
-          <p className="text-sm leading-relaxed text-slate-400">
-            Build grocery lists, calculate item totals, track purchased items, and plan your food budget.
+import { Link } from 'react-router-dom';
+import { ShoppingBag } from 'lucide-react';
+
+export function Footer() {
+  return (
+    <footer className="mt-auto border-t border-slate-200 bg-white">
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 sm:grid-cols-2 sm:px-6 lg:grid-cols-4">
+        <div className="space-y-3">
+          <Link to="/" className="inline-flex items-center gap-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600 text-white">
+              <ShoppingBag size={19} />
+            </span>
+            <span className="text-lg font-bold text-slate-900">
+              CheckLit
+            </span>
+          </Link>
+          <p className="max-w-xs text-sm leading-6 text-slate-500">
+            Create shopping lists, calculate costs, track purchases, and manage your grocery budget.
           </p>
         </div>
+
         <div>
-          <h4 className="mb-4 text-sm font-semibold uppercase tracking-wider text-white">Quick Navigation</h4>
-          <ul className="space-y-2.5 text-sm text-slate-400">
-            <li><Link to="/" className="hover:text-emerald-400">Home Dashboard</Link></li>
-            <li><Link to="/create" className="hover:text-emerald-400">Create Shopping List</Link></li>
-            <li><Link to="/products" className="hover:text-emerald-400">Product Catalog</Link></li>
-            <li><Link to="/about" className="hover:text-emerald-400">About CheckLit</Link></li>
-          </ul>
-        </div>
-        <div>
-          <h4 className="mb-4 text-sm font-semibold uppercase tracking-wider text-white">Catalog Categories</h4>
-          <ul className="space-y-2.5 text-sm text-slate-400">
-            {['Vegetables', 'Fruits', 'Meat', 'Seafood', 'Seasonings', 'Oils', 'Dairy', 'Bakery', 'Snacks', 'Beverage', 'Other'].map((name) => <li key={name}>{name}</li>)}
-          </ul>
-        </div>
-        <div>
-          <h4 className="mb-4 text-sm font-semibold uppercase tracking-wider text-white">Full-Stack Tech</h4>
-          <div className="flex flex-wrap gap-2">
-            {['React', 'TypeScript', 'Tailwind CSS', 'Axios', 'Node.js', 'Express', 'MongoDB'].map((tech) => (
-              <span key={tech} className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 font-mono text-xs text-emerald-400">{tech}</span>
-            ))}
+          <h2 className="mb-3 text-sm font-semibold text-slate-900">
+            Navigation
+          </h2>
+          <div className="flex flex-col items-start gap-2 text-sm text-slate-600">
+            <Link to="/" className="hover:text-emerald-700">
+              Home
+            </Link>
+            <Link to="/products" className="hover:text-emerald-700">
+              Products
+            </Link>
+            <Link to="/about" className="hover:text-emerald-700">
+              About CheckLit
+            </Link>
           </div>
         </div>
+
+        <div>
+          <h2 className="mb-3 text-sm font-semibold text-slate-900">
+            Your Lists
+          </h2>
+          <div className="flex flex-col items-start gap-2 text-sm text-slate-600">
+            <Link to="/create" className="hover:text-emerald-700">
+              Create a List
+            </Link>
+            <Link to="/analytics" className="hover:text-emerald-700">
+              Spending Analytics
+            </Link>
+            <Link to="/profile" className="hover:text-emerald-700">
+              My Profile
+            </Link>
+          </div>
+        </div>
+
+        <div>
+          <h2 className="mb-3 text-sm font-semibold text-slate-900">
+            About
+          </h2>
+          <p className="text-sm leading-6 text-slate-500">
+            CheckLit helps you organize products, monitor shopping expenses, and keep your shopping plans in one place.
+          </p>
+        </div>
       </div>
-      <div className="flex flex-col items-center justify-between gap-4 pt-6 text-xs text-slate-500 sm:flex-row">
-        <div className="flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-500" /><span>CheckLit Full-Stack Web Application © {new Date().getFullYear()}</span></div>
-        <div className="flex items-center gap-2"><span>Built with</span><Heart className="h-3.5 w-3.5 fill-red-500 text-red-500" /><span>for Web Development</span></div>
+
+      <div className="border-t border-slate-200">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <p>© {new Date().getFullYear()} CheckLit. All rights reserved.</p>
+          <p>Shopping lists made simple.</p>
+        </div>
       </div>
-    </div>
-  </footer>
-);
+    </footer>
+  );
+}

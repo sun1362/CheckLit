@@ -1,397 +1,530 @@
-import React, { useState } from 'react';
+
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useShoppingLists } from '../hooks/useShoppingLists';
-import { ConfirmationModal } from '../components/ConfirmationModal';
 import {
+  ShoppingBag,
   Plus,
   Search,
-  ShoppingBag,
-  Calendar,
-  Store,
-  Trash2,
-  Eye,
-  Edit3,
+  Package,
+  CircleDollarSign,
+  Clock3,
   CheckCircle2,
-  Clock,
-  TrendingUp,
+  CalendarDays,
+  Store,
+  Eye,
+  Pencil,
+  Trash2,
+  RefreshCw,
   AlertCircle,
-  Filter,
-  Sparkles,
-  ArrowRight
+  ListChecks,
 } from 'lucide-react';
+import { useShoppingLists } from '../hooks/useShoppingLists';
+import type { ShoppingList, ShoppingListStatus } from '../types';
+import { ConfirmationModal } from '../components/ConfirmationModal';
 
-export const HomePage: React.FC = () => {
-  const { lists, loading, error, successMessage, deleteList, stats } = useShoppingLists();
+const formatCurrency = (amount: number) =>
+  new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+  }).format(amount);
+
+const getListId = (list: ShoppingList) => list.id || list._id || '';
+
+const getStatusClass = (status: ShoppingListStatus) => {
+  if (status === 'Completed') {
+    return 'bg-emerald-100 text-emerald-800';
+  }
+
+  if (status === 'In Progress') {
+    return 'bg-blue-100 text-blue-800';
+  }
+
+  return 'bg-amber-100 text-amber-800';
+};
+
+export const HomePage = () => {
+  const {
+    lists,
+    loading,
+    isMutating,
+    error,
+    successMessage,
+    fetchLists,
+    deleteList,
+    stats,
+  } = useShoppingLists();
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Pending' | 'In Progress' | 'Completed'>('All');
-  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'All' | ShoppingListStatus>('All');
+  const [deleteTarget, setDeleteTarget] = useState<ShoppingList | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Derived filtered lists during render
-  const filteredLists = lists.filter((list) => {
-    const matchesSearch =
-      list.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      list.store.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (list.notes && list.notes.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredLists = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
 
-    const matchesFilter = statusFilter === 'All' || list.status === statusFilter;
-    return matchesSearch && matchesFilter;
-  });
+    return [...lists]
+      .filter((list) => {
+        const matchesSearch =
+          !query ||
+          list.title.toLowerCase().includes(query) ||
+          list.store.toLowerCase().includes(query) ||
+          (list.notes ?? '').toLowerCase().includes(query) ||
+          list.items.some((item) =>
+            item.name.toLowerCase().includes(query)
+          );
 
-  const handleDeleteConfirm = async () => {
-    if (!deleteTargetId) return;
+        const matchesStatus =
+          statusFilter === 'All' || list.status === statusFilter;
+
+        return matchesSearch && matchesStatus;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt || b.createdAt).getTime() -
+          new Date(a.updatedAt || a.createdAt).getTime()
+      );
+  }, [lists, searchQuery, statusFilter]);
+
+  const activeLists = filteredLists.filter(
+    (list) => list.status !== 'Completed'
+  );
+
+  const completedLists = filteredLists.filter(
+    (list) => list.status === 'Completed'
+  );
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+
+    const id = getListId(deleteTarget);
+
+    if (!id) {
+      setDeleteError('This shopping list does not have a valid ID.');
+      return;
+    }
+
     setIsDeleting(true);
+    setDeleteError(null);
+
     try {
-      await deleteList(deleteTargetId);
-      setDeleteTargetId(null);
-    } catch {
-      // Error handled in hook
+      await deleteList(id);
+      setDeleteTarget(null);
+    } catch (err) {
+      setDeleteError(
+        err instanceof Error ? err.message : 'Failed to delete shopping list.'
+      );
     } finally {
       setIsDeleting(false);
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Completed':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-            Completed
-          </span>
-        );
-      case 'In Progress':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full">
-            <Clock className="w-3.5 h-3.5 text-amber-600" />
-            In Progress
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded-full">
-            <Clock className="w-3.5 h-3.5 text-blue-600" />
-            Pending
-          </span>
-        );
+  const handleRefresh = async () => {
+    try {
+      await fetchLists();
+    } catch {
+      return;
     }
   };
 
-  return (
-    <div className="min-h-screen bg-slate-50 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto space-y-8">
+  const renderListCard = (list: ShoppingList) => {
+    const listId = getListId(list);
+    const purchasedCount = list.items.filter(
+      (item) => item.completed
+    ).length;
+    const totalItemCount = list.items.length;
+    const progress =
+      totalItemCount > 0
+        ? Math.round((purchasedCount / totalItemCount) * 100)
+        : 0;
 
-        {/* Success Feedback Banner */}
-        {successMessage && (
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-2xl flex items-center justify-between shadow-xs animate-fadeIn">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-              <span className="text-sm font-medium">{successMessage}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Error State Banner */}
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-2xl flex items-center justify-between shadow-xs">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
-              <span className="text-sm font-medium">{error}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Hero Banner Section */}
-        <div className="relative overflow-hidden bg-gradient-to-br from-emerald-900 via-slate-900 to-teal-950 text-white rounded-3xl p-8 sm:p-10 shadow-xl">
-          <div className="absolute right-0 top-0 -mt-10 -mr-10 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-
-          <div className="relative z-10 max-w-3xl space-y-4">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Smart Grocery Budget & Shopping List Manager</span>
-            </div>
-
-            <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight">
-              Organize your groceries & calculate list totals in real-time.
-            </h1>
-
-            <p className="text-slate-300 text-base sm:text-lg leading-relaxed">
-              Create lists with categorized food ingredients (Vegetables, Fruits, Meat, Seasonings & more). Pick items and quantities while CheckLit computes your totals and budget running balance automatically.
+    return (
+      <article
+        key={listId}
+        className="flex flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-300"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="break-words text-base font-semibold text-slate-900">
+              {list.title}
+            </h3>
+            <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500">
+              <Store size={14} />
+              {list.store || 'No store specified'}
             </p>
+          </div>
 
-            <div className="pt-2 flex flex-wrap gap-4 items-center">
-              <Link
-                to="/create"
-                className="inline-flex items-center gap-2 px-6 py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-base rounded-2xl shadow-lg shadow-emerald-500/25 hover:scale-102 transition-all active:scale-98"
-              >
-                <Plus className="w-5 h-5 stroke-[2.5]" />
-                <span>Create New List</span>
-              </Link>
-              <Link
-                to="/products"
-                className="inline-flex items-center gap-2 px-5 py-3.5 bg-white/10 hover:bg-white/20 text-white font-semibold text-base rounded-2xl border border-white/15 transition-colors"
-              >
-                <Store className="w-5 h-5" />
-                <span>Browse Products</span>
-              </Link>
-            </div>
+          <span
+            className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${getStatusClass(list.status)}`}
+          >
+            {list.status}
+          </span>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">List total</p>
+            <p className="mt-1 text-lg font-bold text-slate-900">
+              {formatCurrency(list.totalCost)}
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-slate-50 p-3">
+            <p className="text-xs text-slate-500">Budget</p>
+            <p className="mt-1 text-lg font-bold text-slate-900">
+              {list.budget > 0
+                ? formatCurrency(list.budget)
+                : 'Not set'}
+            </p>
           </div>
         </div>
 
-        {/* Statistics Dashboard Widget */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-4">
-            <div className="p-3 bg-emerald-100 text-emerald-700 rounded-xl">
-              <ShoppingBag className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Lists</p>
-              <p className="text-2xl font-black text-slate-800">{stats.totalListsCount}</p>
-            </div>
+        <div className="mt-4">
+          <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+            <span>Purchased items</span>
+            <span>
+              {purchasedCount} of {totalItemCount}
+            </span>
           </div>
 
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-4">
-            <div className="p-3 bg-teal-100 rounded-xl">
-              <span className="w-6 h-6 flex items-center justify-center font-extrabold text-xl text-teal-700 leading-none">₱</span>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Spent</p>
-              <p className="text-2xl font-black text-slate-800">₱{stats.totalSpent.toFixed(2)}</p>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-4">
-            <div className="p-3 bg-amber-100 text-amber-700 rounded-xl">
-              <Clock className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Lists</p>
-              <p className="text-2xl font-black text-slate-800">{stats.activeListsCount}</p>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-4">
-            <div className="p-3 bg-indigo-100 text-indigo-700 rounded-xl">
-              <TrendingUp className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Avg List Cost</p>
-              <p className="text-2xl font-black text-slate-800">₱{stats.averageListCost.toFixed(2)}</p>
-            </div>
+          <div
+            className="h-2 overflow-hidden rounded-full bg-slate-100"
+            role="progressbar"
+            aria-valuenow={progress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${list.title} purchase progress`}
+          >
+            <div
+              className="h-full rounded-full bg-emerald-600 transition-all"
+              style={{ width: `${progress}%` }}
+            />
           </div>
         </div>
 
-        {/* Controls Section: Search & Filters */}
-        <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <h2 className="text-xl font-extrabold text-slate-800 flex items-center gap-2">
-              <ShoppingBag className="w-5 h-5 text-emerald-600" />
-              <span>Your Shopping Checklists</span>
-            </h2>
+        {list.targetDate && (
+          <p className="mt-4 flex items-center gap-2 text-xs text-slate-500">
+            <CalendarDays size={14} />
+            Target date: {list.targetDate}
+          </p>
+        )}
 
-            <div className="w-full sm:w-auto flex items-center gap-3">
-              <Link
-                to="/create"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl shadow-xs transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                <span>New List</span>
-              </Link>
+        {list.items.length > 0 && (
+          <div className="mt-4 border-t border-slate-100 pt-3">
+            <p className="mb-2 text-xs font-medium text-slate-500">
+              Items
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {list.items.slice(0, 4).map((item) => (
+                <span
+                  key={item.id}
+                  className="max-w-full truncate rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600"
+                >
+                  {item.name}
+                </span>
+              ))}
+              {list.items.length > 4 && (
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                  +{list.items.length - 4} more
+                </span>
+              )}
             </div>
           </div>
+        )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-            {/* Search Input */}
-            <div className="sm:col-span-2 relative">
-              <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search list by title, store name, or items..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
-              />
-            </div>
+        <div className="mt-auto flex items-center gap-2 border-t border-slate-100 pt-4">
+          <Link
+            to={`/list/${listId}`}
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+          >
+            <Eye size={15} />
+            View
+          </Link>
 
-            {/* Filter Dropdown */}
-            <div className="relative flex items-center">
-              <Filter className="w-4 h-4 absolute left-3.5 text-slate-400 pointer-events-none" />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="w-full pl-10 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all cursor-pointer appearance-none"
-              >
-                <option value="All">All Statuses</option>
-                <option value="Pending">Pending</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Completed">Completed</option>
-              </select>
-            </div>
-          </div>
+          <Link
+            to={`/edit/${listId}`}
+            className="flex items-center justify-center rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50"
+            aria-label={`Edit ${list.title}`}
+          >
+            <Pencil size={16} />
+          </Link>
+
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteError(null);
+              setDeleteTarget(list);
+            }}
+            className="flex items-center justify-center rounded-lg border border-red-200 p-2 text-red-600 hover:bg-red-50"
+            aria-label={`Delete ${list.title}`}
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </article>
+    );
+  };
+
+  return (
+    <div className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6">
+      <section className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+        <div>
+          <p className="text-sm font-medium text-emerald-700">
+            CheckLit Dashboard
+          </p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">
+            Your Shopping Lists
+          </h1>
+          <p className="mt-2 text-sm text-slate-500">
+            Organize your shopping and keep track of your costs.
+          </p>
         </div>
 
-        {/* Lists Content Area */}
-        {loading ? (
-          <div className="py-16 text-center space-y-4">
-            <div className="w-12 h-12 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-slate-500 font-medium text-sm">Loading your grocery lists...</p>
-          </div>
-        ) : filteredLists.length === 0 ? (
-          /* Empty State */
-          <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-12 text-center space-y-5">
-            <div className="w-20 h-20 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
-              <ShoppingBag className="w-10 h-10" />
-            </div>
-            <div className="max-w-md mx-auto space-y-2">
-              <h3 className="text-xl font-bold text-slate-800">No Shopping Lists Found</h3>
-              <p className="text-slate-500 text-sm leading-relaxed">
-                {searchQuery || statusFilter !== 'All'
-                  ? 'No shopping lists match your search filters. Try clearing search criteria.'
-                  : "You haven't created any grocery lists yet. Start building your list with ingredients and live total calculations!"}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw size={16} />
+            Refresh
+          </button>
+
+          <Link
+            to="/create"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+          >
+            <Plus size={17} />
+            Create List
+          </Link>
+        </div>
+      </section>
+
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+        >
+          <AlertCircle size={18} className="mt-0.5 shrink-0" />
+          <div className="flex-1">{error}</div>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="font-semibold underline"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {successMessage && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
+        >
+          <CheckCircle2 size={17} />
+          {successMessage}
+        </div>
+      )}
+
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center gap-3">
+            <span className="rounded-lg bg-emerald-50 p-2.5 text-emerald-700">
+              <ShoppingBag size={20} />
+            </span>
+            <div>
+              <p className="text-sm text-slate-500">Total Lists</p>
+              <p className="text-2xl font-bold text-slate-900">
+                {stats.totalListsCount}
               </p>
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center gap-3">
+            <span className="rounded-lg bg-blue-50 p-2.5 text-blue-700">
+              <CircleDollarSign size={20} />
+            </span>
             <div>
-              <Link
-                to="/create"
-                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md hover:shadow-lg transition-all"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Create Your First List</span>
-              </Link>
+              <p className="text-sm text-slate-500">Actual Spending</p>
+              <p className="text-2xl font-bold text-slate-900">
+                {formatCurrency(stats.totalSpent)}
+              </p>
             </div>
           </div>
-        ) : (
-          /* List Cards Grid */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredLists.map((list) => {
-              const completedCount = list.items.filter((i) => i.completed).length;
-              const totalItemsCount = list.items.length;
-              const progressPct = totalItemsCount > 0 ? Math.round((completedCount / totalItemsCount) * 100) : 0;
-              const isOverBudget = list.budget > 0 && list.totalCost > list.budget;
+        </div>
 
-              return (
-                <div
-                  key={list.id}
-                  className="bg-white rounded-2xl border border-slate-200/90 hover:border-emerald-300 shadow-xs hover:shadow-lg transition-all flex flex-col justify-between overflow-hidden group"
-                >
-                  <div className="p-6 space-y-4">
-                    {/* Header */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-bold text-slate-800 group-hover:text-emerald-700 transition-colors line-clamp-1">
-                          {list.title}
-                        </h3>
-                        <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 mt-1">
-                          <Store className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>{list.store || 'General Grocery'}</span>
-                        </div>
-                      </div>
-                      {getStatusBadge(list.status)}
-                    </div>
-
-                    {/* Progress Bar for Shopping Checklist */}
-                    <div className="space-y-1.5 pt-1">
-                      <div className="flex justify-between text-xs text-slate-500 font-medium">
-                        <span>Items Picked</span>
-                        <span className="font-bold text-slate-700">{completedCount} of {totalItemsCount} ({progressPct}%)</span>
-                      </div>
-                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                          style={{ width: `${progressPct}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Cost & Budget Summary Box */}
-                    <div className="bg-slate-50 rounded-xl p-3.5 flex items-center justify-between border border-slate-100">
-                      <div>
-                        <span className="text-xs text-slate-500 font-medium block">Total Price</span>
-                        <span className="text-xl font-black text-slate-900">₱{list.totalCost.toFixed(2)}</span>
-                      </div>
-                      {list.budget > 0 && (
-                        <div className="text-right">
-                          <span className="text-xs text-slate-500 font-medium block">Budget</span>
-                          <span className={`text-sm font-bold ${isOverBudget ? 'text-red-600' : 'text-slate-700'}`}>
-                            ₱{list.budget.toFixed(2)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Items Sample */}
-                    <div className="space-y-1.5 text-xs text-slate-600">
-                      <span className="font-semibold text-slate-400 block uppercase tracking-wider text-[10px]">Preview Items:</span>
-                      <ul className="space-y-1">
-                        {list.items.slice(0, 3).map((item) => (
-                          <li key={item.id} className="flex items-center justify-between truncate">
-                            <span className={`truncate ${item.completed ? 'line-through text-slate-400' : 'font-medium'}`}>
-                              {item.name} ({item.quantity} {item.unit})
-                            </span>
-                            <span className="font-semibold text-slate-700 shrink-0 ml-2">
-                              ₱{item.totalPrice.toFixed(2)}
-                            </span>
-                          </li>
-                        ))}
-                        {list.items.length > 3 && (
-                          <li className="text-emerald-600 font-medium text-[11px] pt-0.5">
-                            +{list.items.length - 3} more items in list...
-                          </li>
-                        )}
-                      </ul>
-                    </div>
-                  </div>
-
-                  {/* Card Footer Actions */}
-                  <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1 text-xs text-slate-400">
-                      <Calendar className="w-3.5 h-3.5" />
-                      <span>{list.targetDate}</span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <Link
-                        to={`/edit/${list.id}`}
-                        className="p-2 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
-                        title="Edit List"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </Link>
-                      <button
-                        onClick={() => setDeleteTargetId(list.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Delete List"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                      <Link
-                        to={`/list/${list.id}`}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-emerald-600 hover:text-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg shadow-xs transition-all"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>View Details</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center gap-3">
+            <span className="rounded-lg bg-amber-50 p-2.5 text-amber-700">
+              <Clock3 size={20} />
+            </span>
+            <div>
+              <p className="text-sm text-slate-500">Active Lists</p>
+              <p className="text-2xl font-bold text-slate-900">
+                {stats.activeListsCount}
+              </p>
+            </div>
           </div>
-        )}
+        </div>
 
-        {/* Delete Confirmation Step Modal */}
-        <ConfirmationModal
-          isOpen={!!deleteTargetId}
-          title="Delete Shopping List"
-          message="Are you sure you want to delete this shopping list? This action cannot be undone."
-          confirmLabel="Delete List"
-          isLoading={isDeleting}
-          onConfirm={handleDeleteConfirm}
-          onCancel={() => setDeleteTargetId(null)}
-        />
-      </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="flex items-center gap-3">
+            <span className="rounded-lg bg-violet-50 p-2.5 text-violet-700">
+              <Package size={20} />
+            </span>
+            <div>
+              <p className="text-sm text-slate-500">Average List Cost</p>
+              <p className="text-2xl font-bold text-slate-900">
+                {formatCurrency(stats.averageListCost)}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 sm:p-6">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-2">
+            <ListChecks className="text-emerald-700" size={21} />
+            <h2 className="text-lg font-semibold text-slate-900">
+              Shopping Lists
+            </h2>
+          </div>
+
+          <span className="text-sm text-slate-500">
+            {filteredLists.length} {filteredLists.length === 1 ? 'list' : 'lists'}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_220px]">
+          <div className="relative">
+            <Search
+              size={17}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+            />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search titles, stores, notes, or products..."
+              className="w-full rounded-lg border border-slate-300 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+            />
+          </div>
+
+          <select
+            value={statusFilter}
+            onChange={(event) =>
+              setStatusFilter(event.target.value as 'All' | ShoppingListStatus)
+            }
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+          >
+            <option value="All">All statuses</option>
+            <option value="Pending">Pending</option>
+            <option value="In Progress">In Progress</option>
+            <option value="Completed">Completed</option>
+          </select>
+        </div>
+      </section>
+
+      {loading && lists.length === 0 ? (
+        <div className="flex items-center justify-center rounded-xl border border-slate-200 bg-white px-6 py-16">
+          <div className="flex items-center gap-3 text-sm text-slate-500">
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent" />
+            Loading shopping lists...
+          </div>
+        </div>
+      ) : filteredLists.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+            <ShoppingBag size={27} />
+          </div>
+
+          <h2 className="mt-4 text-lg font-semibold text-slate-900">
+            {lists.length === 0
+              ? 'No Shopping Lists Yet'
+              : 'No Matching Lists'}
+          </h2>
+
+          <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
+            {lists.length === 0
+              ? 'Create your first shopping list to start organizing products and calculating costs.'
+              : 'Try a different search term or select another status.'}
+          </p>
+
+          {lists.length === 0 && (
+            <Link
+              to="/create"
+              className="mt-5 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+            >
+              <Plus size={17} />
+              Create Your First List
+            </Link>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {activeLists.length > 0 && (
+            <section className="space-y-4">
+              <h2 className="text-lg font-semibold text-slate-900">
+                Active Lists
+                <span className="ml-2 text-sm font-normal text-slate-500">
+                  ({activeLists.length})
+                </span>
+              </h2>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {activeLists.map(renderListCard)}
+              </div>
+            </section>
+          )}
+
+          {completedLists.length > 0 && (
+            <section className="space-y-4">
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                <CheckCircle2 size={20} className="text-emerald-700" />
+                Completed Lists
+                <span className="text-sm font-normal text-slate-500">
+                  ({completedLists.length})
+                </span>
+              </h2>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {completedLists.map(renderListCard)}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+
+      <ConfirmationModal
+        isOpen={Boolean(deleteTarget)}
+        title="Delete Shopping List"
+        message={`Are you sure you want to delete "${deleteTarget?.title ?? ''}"? This action cannot be undone.`}
+        isLoading={isDeleting || isMutating}
+        onConfirm={handleDelete}
+        onCancel={() => {
+          if (!isDeleting) {
+            setDeleteTarget(null);
+            setDeleteError(null);
+          }
+        }}
+      />
+
+      {deleteError && (
+        <div
+          role="alert"
+          className="fixed bottom-5 right-5 z-50 max-w-sm rounded-lg border border-red-200 bg-white p-4 text-sm text-red-700 shadow-lg"
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle size={18} className="mt-0.5 shrink-0" />
+            <span>{deleteError}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

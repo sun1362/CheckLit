@@ -4,21 +4,20 @@ import type {
   ApiMessageResponse,
   AuthResponse,
   AuthUser,
+  Category,
   Product,
-  ProductCategory,
   ShoppingItem,
   ShoppingList,
   ShoppingListStatus,
+  UserProfile,
 } from '../types';
-import { PRODUCT_CATEGORIES } from '../types';
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 export const AUTH_TOKEN_KEY = 'checklit_auth_token';
 export const AUTH_USER_KEY = 'checklit_auth_user';
-
-const GUEST_LISTS_KEY = 'checklit_guest_shopping_lists_v1';
+export const GUEST_LISTS_KEY = 'checklit_guest_shopping_lists_v1';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -30,32 +29,38 @@ export const apiClient = axios.create({
   timeout: 10000,
 });
 
+function notifyAuthChanged(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('checklit-auth-changed'));
+  }
+}
+
 export function getAuthToken(): string | null {
   return localStorage.getItem(AUTH_TOKEN_KEY);
 }
 
 export function getAuthUser(): AuthUser | null {
   try {
-    const raw = localStorage.getItem(AUTH_USER_KEY);
+    const rawUser = localStorage.getItem(AUTH_USER_KEY);
 
-    if (!raw) return null;
+    if (!rawUser) return null;
 
-    const value = JSON.parse(raw) as Partial<AuthUser>;
+    const raw = JSON.parse(rawUser) as Partial<AuthUser>;
 
     if (
-      typeof value.id !== 'string' ||
-      typeof value.name !== 'string' ||
-      typeof value.email !== 'string' ||
-      (value.role !== 'user' && value.role !== 'admin')
+      typeof raw.id !== 'string' ||
+      typeof raw.name !== 'string' ||
+      typeof raw.email !== 'string' ||
+      (raw.role !== 'user' && raw.role !== 'admin')
     ) {
       return null;
     }
 
     return {
-      id: value.id,
-      name: value.name,
-      email: value.email,
-      role: value.role,
+      id: raw.id,
+      name: raw.name,
+      email: raw.email,
+      role: raw.role,
     };
   } catch {
     return null;
@@ -65,56 +70,37 @@ export function getAuthUser(): AuthUser | null {
 export function setAuthSession(token: string, user: AuthUser): void {
   localStorage.setItem(AUTH_TOKEN_KEY, token);
   localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+  notifyAuthChanged();
 }
 
 export function clearAuthSession(): void {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
+  notifyAuthChanged();
 }
 
-apiClient.interceptors.request.use((config) => {
-  const token = getAuthToken();
-
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  } else {
-    delete config.headers.Authorization;
-  }
-
-  return config;
-});
-
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error: unknown) => {
-    if (
-      axios.isAxiosError(error) &&
-      error.response?.status === 401 &&
-      !error.config?.url?.includes('/auth/login') &&
-      !error.config?.url?.includes('/auth/register')
-    ) {
-      clearAuthSession();
-    }
-
-    return Promise.reject(error);
-  }
-);
+export function clearGuestLists(): void {
+  sessionStorage.removeItem(GUEST_LISTS_KEY);
+}
 
 export function getApiErrorMessage(
   error: unknown,
   fallback = 'Something went wrong. Please try again.'
 ): string {
   if (axios.isAxiosError(error)) {
-    const response = error.response?.data as
-      | { message?: unknown; error?: unknown }
+    const data = error.response?.data as
+      | {
+          message?: unknown;
+          error?: unknown;
+        }
       | undefined;
 
-    if (typeof response?.message === 'string') {
-      return response.message;
+    if (typeof data?.message === 'string') {
+      return data.message;
     }
 
-    if (typeof response?.error === 'string') {
-      return response.error;
+    if (typeof data?.error === 'string') {
+      return data.error;
     }
 
     if (error.code === 'ECONNABORTED') {
@@ -122,7 +108,7 @@ export function getApiErrorMessage(
     }
 
     if (!error.response) {
-      return 'Unable to reach the CheckLit server. Check that the backend is running.';
+      return 'Unable to reach the CheckLit server. Make sure the backend is running.';
     }
 
     return error.message || fallback;
@@ -135,12 +121,37 @@ export function getApiErrorMessage(
   return fallback;
 }
 
-function asRecord(value: unknown): UnknownRecord {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as UnknownRecord;
+apiClient.interceptors.request.use((config) => {
+  const token = getAuthToken();
+
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  } else if (config.headers.Authorization) {
+    delete config.headers.Authorization;
   }
 
-  return {};
+  return config;
+});
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    if (
+      axios.isAxiosError(error) &&
+      error.response?.status === 401 &&
+      !String(error.config?.url ?? '').startsWith('/auth/')
+    ) {
+      clearAuthSession();
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+function asRecord(value: unknown): UnknownRecord {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : {};
 }
 
 function asString(value: unknown, fallback = ''): string {
@@ -148,25 +159,12 @@ function asString(value: unknown, fallback = ''): string {
 }
 
 function asNumber(value: unknown, fallback = 0): number {
-  const result = Number(value);
-  return Number.isFinite(result) ? result : fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function normalizeCategory(value: unknown): ProductCategory {
-  const category = asString(value);
-
-  return PRODUCT_CATEGORIES.find((item) => item === category) ?? 'Other';
-}
-
-function deriveListStatus(items: ShoppingItem[]): ShoppingListStatus {
-  if (items.length === 0) return 'Pending';
-
-  const completedCount = items.filter((item) => item.completed).length;
-
-  if (completedCount === 0) return 'Pending';
-  if (completedCount === items.length) return 'Completed';
-
-  return 'In Progress';
+function roundMoney(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 function normalizeAuthResponse(value: unknown): AuthResponse {
@@ -186,22 +184,52 @@ function normalizeAuthResponse(value: unknown): AuthResponse {
     throw new Error('The server returned an invalid authentication response.');
   }
 
-  const user: AuthUser = {
-    id,
-    name: asString(rawUser.name),
-    email: asString(rawUser.email),
-    role,
-  };
-
   return {
     message: asString(raw.message),
     token,
-    user,
+    user: {
+      id,
+      name: asString(rawUser.name),
+      email: asString(rawUser.email),
+      role,
+    },
+  };
+}
+
+function normalizeCategory(value: unknown): Category {
+  const wrapper = asRecord(value);
+  const raw =
+    wrapper.category && typeof wrapper.category === 'object'
+      ? asRecord(wrapper.category)
+      : wrapper;
+
+  const id = asString(raw.id, asString(raw._id));
+
+  if (!id) {
+    throw new Error('The server returned a category without an ID.');
+  }
+
+  return {
+    id,
+    ...(raw._id ? { _id: asString(raw._id) } : {}),
+    name: asString(raw.name),
+    description: asString(raw.description),
+    ...(typeof raw.createdAt === 'string'
+      ? { createdAt: raw.createdAt }
+      : {}),
+    ...(typeof raw.updatedAt === 'string'
+      ? { updatedAt: raw.updatedAt }
+      : {}),
   };
 }
 
 function normalizeProduct(value: unknown): Product {
-  const raw = asRecord(value);
+  const wrapper = asRecord(value);
+  const raw =
+    wrapper.product && typeof wrapper.product === 'object'
+      ? asRecord(wrapper.product)
+      : wrapper;
+
   const id = asString(raw.id, asString(raw._id));
 
   if (!id) {
@@ -212,7 +240,7 @@ function normalizeProduct(value: unknown): Product {
     id,
     ...(raw._id ? { _id: asString(raw._id) } : {}),
     name: asString(raw.name),
-    category: normalizeCategory(raw.category),
+    category: asString(raw.category, 'Other'),
     unitPrice: asNumber(raw.unitPrice),
     unit: asString(raw.unit),
     icon: asString(raw.icon),
@@ -226,6 +254,54 @@ function normalizeProduct(value: unknown): Product {
   };
 }
 
+function normalizeProfile(value: unknown): UserProfile {
+  const wrapper = asRecord(value);
+  const raw =
+    wrapper.user && typeof wrapper.user === 'object'
+      ? asRecord(wrapper.user)
+      : wrapper;
+
+  const id = asString(raw.id, asString(raw._id));
+  const role = raw.role;
+
+  return {
+    ...(id ? { id } : {}),
+    name: asString(raw.name),
+    email: asString(raw.email),
+    ...(role === 'user' || role === 'admin' ? { role } : {}),
+    ...(typeof raw.currency === 'string'
+      ? { currency: raw.currency }
+      : {}),
+    ...(typeof raw.defaultBudget === 'number'
+      ? { defaultBudget: raw.defaultBudget }
+      : {}),
+    ...(typeof raw.createdAt === 'string'
+      ? { createdAt: raw.createdAt }
+      : {}),
+    ...(typeof raw.updatedAt === 'string'
+      ? { updatedAt: raw.updatedAt }
+      : {}),
+  };
+}
+
+function deriveListStatus(items: ShoppingItem[]): ShoppingListStatus {
+  if (items.length === 0) {
+    return 'Pending';
+  }
+
+  const completedCount = items.filter((item) => item.completed).length;
+
+  if (completedCount === 0) {
+    return 'Pending';
+  }
+
+  if (completedCount === items.length) {
+    return 'Completed';
+  }
+
+  return 'In Progress';
+}
+
 function normalizeItem(
   value: unknown,
   index: number,
@@ -236,23 +312,22 @@ function normalizeItem(
   const name = asString(raw.name, 'Unnamed item');
   const unitPrice = asNumber(raw.unitPrice);
   const quantity = asNumber(raw.quantity);
-  const totalPrice =
-    Math.round((unitPrice * quantity + Number.EPSILON) * 100) / 100;
-
-  const suppliedId = asString(raw.id, asString(raw._id));
-  const id =
-    suppliedId ||
-    `${listId}-item-${index}-${productId || name.toLowerCase().replace(/\s+/g, '-')}`;
+  const id = asString(
+    raw.id,
+    asString(raw._id) ||
+      `${listId}-item-${index}-${productId || name.toLowerCase().replace(/\s+/g, '-')}`
+  );
 
   return {
     id,
+    ...(raw._id ? { _id: asString(raw._id) } : {}),
     ...(productId ? { productId } : {}),
     name,
-    category: normalizeCategory(raw.category),
+    category: asString(raw.category, 'Other'),
     unitPrice,
     quantity,
     unit: asString(raw.unit),
-    totalPrice,
+    totalPrice: roundMoney(unitPrice * quantity),
     completed: raw.completed === true,
     purchaseDate:
       typeof raw.purchaseDate === 'string' ? raw.purchaseDate : null,
@@ -272,12 +347,9 @@ function normalizeList(value: unknown): ShoppingList {
     normalizeItem(item, index, id)
   );
 
-  const totalCost =
-    Math.round(
-      (items.reduce((sum, item) => sum + item.totalPrice, 0) +
-        Number.EPSILON) *
-        100
-    ) / 100;
+  const totalCost = roundMoney(
+    items.reduce((sum, item) => sum + item.totalPrice, 0)
+  );
 
   const createdAt = asString(raw.createdAt, new Date().toISOString());
 
@@ -305,9 +377,9 @@ function getGuestLists(): ShoppingList[] {
 
     const parsed: unknown = JSON.parse(raw);
 
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed.map(normalizeList);
+    return Array.isArray(parsed)
+      ? parsed.map(normalizeList)
+      : [];
   } catch {
     return [];
   }
@@ -325,23 +397,22 @@ function matchesListId(list: ShoppingList, id: string): boolean {
   return list.id === id || list._id === id;
 }
 
-function prepareItemPayload(item: ShoppingItem) {
-  return {
-    productId: item.productId ?? '',
+function serializeItems(items: ShoppingItem[]): UnknownRecord[] {
+  return items.map((item) => ({
+    ...(item.productId ? { productId: item.productId } : {}),
     name: item.name,
     category: item.category,
     unitPrice: item.unitPrice,
     quantity: item.quantity,
     unit: item.unit,
     completed: item.completed,
-  };
+  }));
 }
 
 function prepareListPayload(
   fields: Partial<ShoppingList>
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
-
   const allowedFields: (keyof ShoppingList)[] = [
     'title',
     'store',
@@ -349,20 +420,23 @@ function prepareListPayload(
     'budget',
     'notes',
     'items',
-    'status',
   ];
 
   for (const field of allowedFields) {
-    if (!Object.prototype.hasOwnProperty.call(fields, field)) continue;
-
-    if (field === 'items' && Array.isArray(fields.items)) {
-      payload.items = fields.items.map(prepareItemPayload);
-      payload.status = deriveListStatus(fields.items);
-    } else if (field === 'status' && Array.isArray(fields.items)) {
+    if (!Object.prototype.hasOwnProperty.call(fields, field)) {
       continue;
-    } else {
-      payload[field] = fields[field];
     }
+
+    const value = fields[field];
+
+    payload[field] =
+      field === 'items' && Array.isArray(value)
+        ? serializeItems(value)
+        : value;
+  }
+
+  if (Array.isArray(fields.items)) {
+    payload.items = serializeItems(fields.items);
   }
 
   return payload;
@@ -390,6 +464,7 @@ export const apiService = {
       name: name.trim(),
       email: email.trim().toLowerCase(),
       password,
+      role: 'user',
     });
 
     const auth = normalizeAuthResponse(response.data);
@@ -418,7 +493,10 @@ export const apiService = {
     }
 
     try {
-      const response = await apiClient.get<unknown>(`/lists/${id}`);
+      const response = await apiClient.get<unknown>(
+        `/lists/${encodeURIComponent(id)}`
+      );
+
       return normalizeList(response.data);
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -430,10 +508,7 @@ export const apiService = {
   },
 
   async createList(
-    newList: Omit<
-      ShoppingList,
-      'id' | '_id' | 'createdAt' | 'updatedAt'
-    >
+    newList: Omit<ShoppingList, 'id' | '_id' | 'createdAt' | 'updatedAt'>
   ): Promise<ShoppingList> {
     const payload = prepareListPayload(newList);
 
@@ -443,6 +518,7 @@ export const apiService = {
     }
 
     const now = new Date().toISOString();
+
     const guestList = normalizeList({
       ...payload,
       id: createGuestId(),
@@ -462,18 +538,23 @@ export const apiService = {
     const payload = prepareListPayload(updatedFields);
 
     if (getAuthToken()) {
-      const response = await apiClient.put<unknown>(`/lists/${id}`, payload);
+      const response = await apiClient.put<unknown>(
+        `/lists/${encodeURIComponent(id)}`,
+        payload
+      );
+
       return normalizeList(response.data);
     }
 
     const lists = getGuestLists();
     const index = lists.findIndex((list) => matchesListId(list, id));
 
-    if (index === -1) {
+    if (index < 0) {
       throw new Error('Guest shopping list not found.');
     }
 
     const current = lists[index];
+
     const updated = normalizeList({
       ...current,
       ...payload,
@@ -482,27 +563,85 @@ export const apiService = {
       updatedAt: new Date().toISOString(),
     });
 
-    const nextLists = [...lists];
-    nextLists[index] = updated;
-    saveGuestLists(nextLists);
+    const next = [...lists];
+    next[index] = updated;
+    saveGuestLists(next);
 
     return updated;
   },
 
   async deleteList(id: string): Promise<boolean> {
     if (getAuthToken()) {
-      await apiClient.delete(`/lists/${id}`);
+      await apiClient.delete(`/lists/${encodeURIComponent(id)}`);
       return true;
     }
 
     const lists = getGuestLists();
-    const nextLists = lists.filter((list) => !matchesListId(list, id));
+    const next = lists.filter((list) => !matchesListId(list, id));
 
-    if (nextLists.length === lists.length) {
+    if (next.length === lists.length) {
       throw new Error('Guest shopping list not found.');
     }
 
-    saveGuestLists(nextLists);
+    saveGuestLists(next);
+
+    return true;
+  },
+
+  async getCategories(): Promise<Category[]> {
+    const response = await apiClient.get<unknown[]>('/categories');
+
+    if (!Array.isArray(response.data)) {
+      throw new Error('The server returned an invalid category response.');
+    }
+
+    return response.data.map(normalizeCategory);
+  },
+
+  async getCategoryById(id: string): Promise<Category> {
+    const response = await apiClient.get<unknown>(
+      `/categories/${encodeURIComponent(id)}`
+    );
+
+    return normalizeCategory(response.data);
+  },
+
+  async addCategory(
+    newCategory: Pick<Category, 'name'> &
+      Partial<Pick<Category, 'description'>>
+  ): Promise<Category> {
+    const response = await apiClient.post<unknown>('/categories', {
+      name: newCategory.name.trim(),
+      description: newCategory.description?.trim() ?? '',
+    });
+
+    return normalizeCategory(response.data);
+  },
+
+  async updateCategory(
+    id: string,
+    updatedFields: Partial<Pick<Category, 'name' | 'description'>>
+  ): Promise<Category> {
+    const payload: Record<string, unknown> = {};
+
+    if (typeof updatedFields.name === 'string') {
+      payload.name = updatedFields.name.trim();
+    }
+
+    if (typeof updatedFields.description === 'string') {
+      payload.description = updatedFields.description.trim();
+    }
+
+    const response = await apiClient.put<unknown>(
+      `/categories/${encodeURIComponent(id)}`,
+      payload
+    );
+
+    return normalizeCategory(response.data);
+  },
+
+  async deleteCategory(id: string): Promise<boolean> {
+    await apiClient.delete(`/categories/${encodeURIComponent(id)}`);
     return true;
   },
 
@@ -516,21 +655,20 @@ export const apiService = {
     return response.data.map(normalizeProduct);
   },
 
-  async getProductById(id: string): Promise<Product | null> {
-    try {
-      const response = await apiClient.get<unknown>(`/products/${id}`);
-      return normalizeProduct(response.data);
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return null;
-      }
+  async getProductById(id: string): Promise<Product> {
+    const response = await apiClient.get<unknown>(
+      `/products/${encodeURIComponent(id)}`
+    );
 
-      throw error;
-    }
+    return normalizeProduct(response.data);
   },
 
   async addProduct(
-    newProduct: Omit<Product, 'id' | '_id'>
+    newProduct: Pick<
+      Product,
+      'name' | 'category' | 'unitPrice' | 'unit'
+    > &
+      Partial<Pick<Product, 'icon' | 'description'>>
   ): Promise<Product> {
     const response = await apiClient.post<unknown>('/products', newProduct);
     return normalizeProduct(response.data);
@@ -541,7 +679,6 @@ export const apiService = {
     updatedFields: Partial<Product>
   ): Promise<Product> {
     const payload: Record<string, unknown> = {};
-
     const allowedFields: (keyof Product)[] = [
       'name',
       'category',
@@ -557,13 +694,50 @@ export const apiService = {
       }
     }
 
-    const response = await apiClient.put<unknown>(`/products/${id}`, payload);
+    const response = await apiClient.put<unknown>(
+      `/products/${encodeURIComponent(id)}`,
+      payload
+    );
 
     return normalizeProduct(response.data);
   },
 
   async deleteProduct(id: string): Promise<boolean> {
-    await apiClient.delete<ApiMessageResponse>(`/products/${id}`);
+    await apiClient.delete(`/products/${encodeURIComponent(id)}`);
     return true;
+  },
+
+  async getProfile(): Promise<UserProfile> {
+    const response = await apiClient.get<unknown>('/profile');
+    return normalizeProfile(response.data);
+  },
+
+  async updateProfile(
+    updates: Partial<Pick<UserProfile, 'name'>>
+  ): Promise<UserProfile> {
+    const payload: Record<string, unknown> = {};
+
+    if (typeof updates.name === 'string') {
+      payload.name = updates.name.trim();
+    }
+
+    const response = await apiClient.put<unknown>('/profile', payload);
+    return normalizeProfile(response.data);
+  },
+
+  async changePassword(
+    currentPassword: string,
+    newPassword: string
+  ): Promise<ApiMessageResponse> {
+    const response = await apiClient.patch<unknown>('/profile/password', {
+      currentPassword,
+      newPassword,
+    });
+
+    const raw = asRecord(response.data);
+
+    return {
+      message: asString(raw.message, 'Password updated successfully.'),
+    };
   },
 };

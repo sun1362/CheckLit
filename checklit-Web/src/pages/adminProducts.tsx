@@ -1,116 +1,147 @@
 
-import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
-import {
-  Search,
-  Plus,
-  Package,
-  Pencil,
-  Trash2,
-  RefreshCw,
-  X,
-  Save,
-  ShieldCheck,
-  AlertCircle,
-} from 'lucide-react';
-import { apiClient } from '../services/api';
+import { useState, type FormEvent } from 'react';
+import type { Category, Product } from '../types';
+import { apiService, getApiErrorMessage } from '../services/api';
+import { useProducts } from '../hooks/useProducts';
 
-const CATEGORIES = [
-  'Vegetables',
-  'Fruits',
-  'Meat',
-  'Seafood',
-  'Seasonings',
-  'Oils',
-  'Dairy',
-  'Bakery',
-  'Snacks',
-  'Beverage',
-  'Other',
-];
+export function AdminProductsPage() {
+  const {
+    products,
+    categoryRecords,
+    loading,
+    loadingCategories,
+    isMutating,
+    error,
+    successMessage,
+    createProduct,
+    updateProduct,
+    deleteProduct,
+    fetchProducts,
+    fetchCategories,
+    clearMessages,
+  } = useProducts();
 
-interface AdminProduct {
-  _id?: string;
-  id?: string;
-  name: string;
-  category: string;
-  unitPrice: number;
-  unit: string;
-  icon?: string;
-  description?: string;
-}
+  const [productForm, setProductForm] = useState({
+    name: '',
+    category: '',
+    unitPrice: '',
+    unit: 'pcs',
+    icon: '',
+    description: '',
+  });
 
-const EMPTY_FORM = {
-  name: '',
-  category: 'Vegetables',
-  unitPrice: '',
-  unit: 'kg',
-  icon: '',
-  description: '',
-};
+  const [editingProductId, setEditingProductId] = useState('');
+  const [productError, setProductError] = useState('');
+  const [productMessage, setProductMessage] = useState('');
+  const [savingProduct, setSavingProduct] = useState(false);
 
-export const AdminProductsPage = () => {
-  const [products, setProducts] = useState<AdminProduct[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('All');
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [categoryForm, setCategoryForm] = useState({
+    name: '',
+    description: '',
+  });
 
-  const loadProducts = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const [editingCategoryId, setEditingCategoryId] = useState('');
+  const [categoryError, setCategoryError] = useState('');
+  const [categoryMessage, setCategoryMessage] = useState('');
+  const [savingCategory, setSavingCategory] = useState(false);
 
-    try {
-      const response = await apiClient.get<AdminProduct[]>('/products');
-      setProducts(response.data);
-    } catch {
-      setError(
-        'Unable to load products from the server. Check that the Express backend is running.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
 
-  useEffect(() => {
-    void loadProducts();
-  }, [loadProducts]);
+  const visibleProducts = products.filter((product) => {
+    const query = searchQuery.trim().toLowerCase();
 
-  const filteredProducts = products.filter((product) => {
     const matchesSearch =
-      product.name.toLowerCase().includes(search.toLowerCase()) ||
-      (product.description ?? '').toLowerCase().includes(search.toLowerCase());
+      !query ||
+      product.name.toLowerCase().includes(query) ||
+      product.category.toLowerCase().includes(query);
 
     const matchesCategory =
-      category === 'All' || product.category === category;
+      selectedCategory === 'All' ||
+      product.category.toLowerCase() === selectedCategory.toLowerCase();
 
     return matchesSearch && matchesCategory;
   });
 
-  const openCreateForm = () => {
-    setEditingId(null);
-    setForm(EMPTY_FORM);
-    setError('');
-    setSuccess('');
-    setShowForm(true);
+  const resetProductForm = () => {
+    setProductForm({
+      name: '',
+      category: '',
+      unitPrice: '',
+      unit: 'pcs',
+      icon: '',
+      description: '',
+    });
+    setEditingProductId('');
+    setProductError('');
   };
 
-  const openEditForm = (product: AdminProduct) => {
-    const id = product._id ?? product.id;
+  const resetCategoryForm = () => {
+    setCategoryForm({
+      name: '',
+      description: '',
+    });
+    setEditingCategoryId('');
+    setCategoryError('');
+  };
 
-    if (!id) {
-      setError('This product has no usable ID.');
+  const handleProductSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setProductError('');
+    setProductMessage('');
+    clearMessages();
+
+    const name = productForm.name.trim();
+    const category = productForm.category.trim();
+    const unit = productForm.unit.trim();
+    const unitPrice = Number(productForm.unitPrice);
+
+    if (!name || !category || !unit) {
+      setProductError('Please complete the required product fields.');
       return;
     }
 
-    setEditingId(id);
-    setForm({
+    if (
+      productForm.unitPrice.trim() === '' ||
+      !Number.isFinite(unitPrice) ||
+      unitPrice < 0
+    ) {
+      setProductError('Enter a valid unit price that is zero or greater.');
+      return;
+    }
+
+    setSavingProduct(true);
+
+    try {
+      const payload = {
+        name,
+        category,
+        unitPrice,
+        unit,
+        icon: productForm.icon.trim(),
+        description: productForm.description.trim(),
+      };
+
+      if (editingProductId) {
+        await updateProduct(editingProductId, payload);
+        setProductMessage('Product updated successfully.');
+      } else {
+        await createProduct(payload);
+        setProductMessage('Product added successfully.');
+      }
+
+      resetProductForm();
+      await fetchProducts();
+    } catch (err) {
+      setProductError(getApiErrorMessage(err, 'Unable to save the product.'));
+    } finally {
+      setSavingProduct(false);
+    }
+  };
+
+  const startProductEdit = (product: Product) => {
+    setEditingProductId(product.id || product._id || '');
+    setProductForm({
       name: product.name,
       category: product.category,
       unitPrice: String(product.unitPrice),
@@ -118,531 +149,620 @@ export const AdminProductsPage = () => {
       icon: product.icon ?? '',
       description: product.description ?? '',
     });
-    setError('');
-    setSuccess('');
-    setShowForm(true);
+    setProductError('');
+    setProductMessage('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setError('');
-    setSuccess('');
+  const handleProductDelete = async (product: Product) => {
+    const productId = product.id || product._id;
 
-    const price = Number(form.unitPrice);
-
-    if (!form.name.trim()) {
-      setError('Product name is required.');
-      return;
-    }
-
-    if (!Number.isFinite(price) || price < 0) {
-      setError('Enter a valid price greater than or equal to zero.');
-      return;
-    }
-
-    if (!form.unit.trim()) {
-      setError('Measurement unit is required.');
-      return;
-    }
-
-    const payload = {
-      name: form.name.trim(),
-      category: form.category,
-      unitPrice: price,
-      unit: form.unit.trim(),
-      icon: form.icon.trim(),
-      description: form.description.trim(),
-    };
-
-    setSaving(true);
-
-    try {
-      if (editingId) {
-        await apiClient.put(`/products/${editingId}`, payload);
-        setSuccess('Product updated successfully.');
-      } else {
-        await apiClient.post('/products', payload);
-        setSuccess('Product added successfully.');
-      }
-
-      setShowForm(false);
-      setForm(EMPTY_FORM);
-      setEditingId(null);
-      await loadProducts();
-    } catch (err: unknown) {
-      const message =
-        typeof err === 'object' &&
-        err !== null &&
-        'response' in err &&
-        typeof err.response === 'object' &&
-        err.response !== null &&
-        'data' in err.response &&
-        typeof err.response.data === 'object' &&
-        err.response.data !== null &&
-        'message' in err.response.data
-          ? String(err.response.data.message)
-          : 'Unable to save the product. Please try again.';
-
-      setError(message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (product: AdminProduct) => {
-    const id = product._id ?? product.id;
-
-    if (!id) {
-      setError('This product has no usable ID.');
+    if (!productId) {
+      setProductError('Unable to identify this product.');
       return;
     }
 
     const confirmed = window.confirm(
-      `Delete "${product.name}" from the master catalog? Existing shopping-list items will not automatically be deleted.`
+      `Delete "${product.name}" from the product catalog? Existing shopping lists will retain their saved item details.`
     );
 
     if (!confirmed) return;
 
-    setError('');
-    setSuccess('');
-    setDeletingId(id);
+    setProductError('');
+    setProductMessage('');
 
     try {
-      await apiClient.delete(`/products/${id}`);
-      setProducts((current) =>
-        current.filter((item) => (item._id ?? item.id) !== id)
+      await deleteProduct(productId);
+      setProductMessage('Product deleted successfully.');
+
+      if (editingProductId === productId) {
+        resetProductForm();
+      }
+    } catch (err) {
+      setProductError(getApiErrorMessage(err, 'Unable to delete the product.'));
+    }
+  };
+
+  const handleCategorySubmit = async (
+    event: FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+    setCategoryError('');
+    setCategoryMessage('');
+
+    const name = categoryForm.name.trim();
+
+    if (name.length < 2) {
+      setCategoryError('Category name must contain at least 2 characters.');
+      return;
+    }
+
+    setSavingCategory(true);
+
+    try {
+      if (editingCategoryId) {
+        await apiService.updateCategory(editingCategoryId, {
+          name,
+          description: categoryForm.description.trim(),
+        });
+        setCategoryMessage(
+          'Category updated. Products using this category have been synchronized.'
+        );
+      } else {
+        await apiService.addCategory({
+          name,
+          description: categoryForm.description.trim(),
+        });
+        setCategoryMessage('Category added successfully.');
+      }
+
+      resetCategoryForm();
+      await Promise.all([fetchCategories(), fetchProducts()]);
+    } catch (err) {
+      setCategoryError(
+        getApiErrorMessage(err, 'Unable to save the category.')
       );
-      setSuccess(`"${product.name}" was deleted from the catalog.`);
-    } catch {
-      setError('Unable to delete this product. Please try again.');
     } finally {
-      setDeletingId(null);
+      setSavingCategory(false);
+    }
+  };
+
+  const startCategoryEdit = (category: Category) => {
+    setEditingCategoryId(category.id || category._id || '');
+    setCategoryForm({
+      name: category.name,
+      description: category.description ?? '',
+    });
+    setCategoryError('');
+    setCategoryMessage('');
+  };
+
+  const handleCategoryDelete = async (category: Category) => {
+    const categoryId = category.id || category._id;
+
+    if (!categoryId) {
+      setCategoryError('Unable to identify this category.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete the "${category.name}" category? Categories assigned to existing products cannot be deleted.`
+    );
+
+    if (!confirmed) return;
+
+    setCategoryError('');
+    setCategoryMessage('');
+
+    try {
+      await apiService.deleteCategory(categoryId);
+      setCategoryMessage('Category deleted successfully.');
+
+      if (editingCategoryId === categoryId) {
+        resetCategoryForm();
+      }
+
+      if (
+        selectedCategory.toLowerCase() === category.name.toLowerCase()
+      ) {
+        setSelectedCategory('All');
+      }
+
+      await Promise.all([fetchCategories(), fetchProducts()]);
+    } catch (err) {
+      setCategoryError(
+        getApiErrorMessage(
+          err,
+          'Unable to delete the category. Check whether products still use it.'
+        )
+      );
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-          <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-4">
-              <div className="rounded-2xl bg-emerald-100 p-3 text-emerald-700">
-                <ShieldCheck className="h-8 w-8" />
-              </div>
+    <main className="min-h-screen bg-gray-50 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-8">
+        <header>
+          <p className="text-sm font-semibold uppercase tracking-wide text-green-700">
+            Administration
+          </p>
+          <h1 className="mt-2 text-3xl font-bold text-gray-900">
+            Product Catalog Management
+          </h1>
+          <p className="mt-2 text-gray-600">
+            Manage catalog products and the categories available throughout CheckLit.
+          </p>
+        </header>
 
-              <div>
-                <p className="text-sm font-semibold text-emerald-700">
-                  ADMINISTRATION
-                </p>
-                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-800 sm:text-3xl">
-                  Product Management
-                </h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Manage the master catalog available to CheckLit users.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void loadProducts()}
-                disabled={loading}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                <RefreshCw
-                  className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
-                />
-                Refresh
-              </button>
-
-              <button
-                type="button"
-                onClick={openCreateForm}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-emerald-700 hover:to-teal-700"
-              >
-                <Plus className="h-4 w-4" />
-                Add Product
-              </button>
-            </div>
+        <section className="grid gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Total Products</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900">
+              {products.length}
+            </p>
           </div>
-
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">Catalog products</p>
-              <p className="mt-1 text-2xl font-black text-slate-800">
-                {products.length}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">Categories used</p>
-              <p className="mt-1 text-2xl font-black text-slate-800">
-                {new Set(products.map((product) => product.category)).size}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">Matching products</p>
-              <p className="mt-1 text-2xl font-black text-slate-800">
-                {filteredProducts.length}
-              </p>
-            </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Total Categories</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900">
+              {categoryRecords.length}
+            </p>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-gray-500">Filtered Products</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900">
+              {visibleProducts.length}
+            </p>
           </div>
         </section>
 
-        {error && (
-          <div
-            role="alert"
-            className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
-          >
-            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
-            <p>{error}</p>
+        <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-5">
+            <h2 className="text-xl font-bold text-gray-900">
+              {editingProductId ? 'Edit Product' : 'Add Product'}
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Products are saved in the backend catalog.
+            </p>
           </div>
-        )}
 
-        {success && (
-          <div
-            role="status"
-            className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"
-          >
-            {success}
-          </div>
-        )}
-
-        {showForm && (
-          <section className="rounded-3xl border border-emerald-200 bg-white p-6 shadow-sm sm:p-8">
-            <div className="mb-6 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-bold text-slate-800">
-                  {editingId ? 'Edit Product' : 'Add New Product'}
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Enter the details that users will see in the catalog.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowForm(false)}
-                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
-                aria-label="Close product form"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <label className="space-y-1.5 text-sm font-semibold text-slate-700">
-                  Product name *
-                  <input
-                    required
-                    maxLength={100}
-                    value={form.name}
-                    onChange={(event) =>
-                      setForm({ ...form, name: event.target.value })
-                    }
-                    placeholder="e.g. Fresh Tomato"
-                    className="w-full rounded-xl border border-slate-200 px-3.5 py-3 font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                  />
-                </label>
-
-                <label className="space-y-1.5 text-sm font-semibold text-slate-700">
-                  Category *
-                  <select
-                    required
-                    value={form.category}
-                    onChange={(event) =>
-                      setForm({ ...form, category: event.target.value })
-                    }
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                  >
-                    {CATEGORIES.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="space-y-1.5 text-sm font-semibold text-slate-700">
-                  Unit price (₱) *
-                  <input
-                    required
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.unitPrice}
-                    onChange={(event) =>
-                      setForm({ ...form, unitPrice: event.target.value })
-                    }
-                    placeholder="0.00"
-                    className="w-full rounded-xl border border-slate-200 px-3.5 py-3 font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                  />
-                </label>
-
-                <label className="space-y-1.5 text-sm font-semibold text-slate-700">
-                  Measurement unit *
-                  <input
-                    required
-                    maxLength={30}
-                    value={form.unit}
-                    onChange={(event) =>
-                      setForm({ ...form, unit: event.target.value })
-                    }
-                    placeholder="kg, piece, pack, bottle"
-                    className="w-full rounded-xl border border-slate-200 px-3.5 py-3 font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                  />
-                </label>
-
-                <label className="space-y-1.5 text-sm font-semibold text-slate-700">
-                  Icon or emoji
-                  <input
-                    maxLength={20}
-                    value={form.icon}
-                    onChange={(event) =>
-                      setForm({ ...form, icon: event.target.value })
-                    }
-                    placeholder="e.g. 🍅"
-                    className="w-full rounded-xl border border-slate-200 px-3.5 py-3 font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                  />
-                </label>
-
-                <label className="space-y-1.5 text-sm font-semibold text-slate-700 md:col-span-2">
-                  Description
-                  <textarea
-                    rows={3}
-                    maxLength={500}
-                    value={form.description}
-                    onChange={(event) =>
-                      setForm({ ...form, description: event.target.value })
-                    }
-                    placeholder="Optional product details"
-                    className="w-full resize-y rounded-xl border border-slate-200 px-3.5 py-3 font-normal outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-                  />
-                </label>
-              </div>
-
-              <div className="flex flex-wrap justify-end gap-3 border-t border-slate-100 pt-5">
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <Save className="h-4 w-4" />
-                  {saving
-                    ? 'Saving...'
-                    : editingId
-                      ? 'Save Changes'
-                      : 'Add Product'}
-                </button>
-              </div>
-            </form>
-          </section>
-        )}
-
-        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="grid grid-cols-1 gap-3 border-b border-slate-100 p-4 md:grid-cols-3 md:p-5">
-            <div className="relative md:col-span-2">
-              <Search className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search product name or description..."
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none focus:border-emerald-500 focus:bg-white"
-              />
-            </div>
-
-            <select
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-emerald-500"
+          {(productError || error) && (
+            <p
+              role="alert"
+              className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700"
             >
-              <option value="All">All categories</option>
-              {CATEGORIES.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </div>
+              {productError || error}
+            </p>
+          )}
 
-          {loading ? (
-            <div className="flex flex-col items-center gap-3 py-16 text-slate-500">
-              <RefreshCw className="h-8 w-8 animate-spin text-emerald-600" />
-              <p className="text-sm">Loading products from MongoDB...</p>
+          {(productMessage || successMessage) && (
+            <p
+              role="status"
+              className="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700"
+            >
+              {productMessage || successMessage}
+            </p>
+          )}
+
+          <form onSubmit={handleProductSubmit} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  Product Name *
+                </span>
+                <input
+                  required
+                  value={productForm.name}
+                  onChange={(event) =>
+                    setProductForm((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder="Enter product name"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  Category *
+                </span>
+                <select
+                  required
+                  value={productForm.category}
+                  onChange={(event) =>
+                    setProductForm((current) => ({
+                      ...current,
+                      category: event.target.value,
+                    }))
+                  }
+                  disabled={loadingCategories || categoryRecords.length === 0}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                >
+                  <option value="">Select a category</option>
+                  {categoryRecords.map((category) => (
+                    <option
+                      key={category.id || category._id}
+                      value={category.name}
+                    >
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+                {categoryRecords.length === 0 && !loadingCategories && (
+                  <span className="mt-1 block text-xs text-gray-500">
+                    Add a category before creating a product.
+                  </span>
+                )}
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  Unit Price *
+                </span>
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={productForm.unitPrice}
+                  onChange={(event) =>
+                    setProductForm((current) => ({
+                      ...current,
+                      unitPrice: event.target.value,
+                    }))
+                  }
+                  placeholder="0.00"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  Unit *
+                </span>
+                <input
+                  required
+                  value={productForm.unit}
+                  onChange={(event) =>
+                    setProductForm((current) => ({
+                      ...current,
+                      unit: event.target.value,
+                    }))
+                  }
+                  placeholder="pcs, kg, pack, bottle"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  Icon (optional)
+                </span>
+                <input
+                  value={productForm.icon}
+                  onChange={(event) =>
+                    setProductForm((current) => ({
+                      ...current,
+                      icon: event.target.value,
+                    }))
+                  }
+                  placeholder="Emoji or icon value"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  Description (optional)
+                </span>
+                <input
+                  value={productForm.description}
+                  onChange={(event) =>
+                    setProductForm((current) => ({
+                      ...current,
+                      description: event.target.value,
+                    }))
+                  }
+                  placeholder="Product description"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                />
+              </label>
             </div>
-          ) : filteredProducts.length === 0 ? (
-            <div className="flex flex-col items-center px-6 py-16 text-center">
-              <div className="rounded-2xl bg-slate-100 p-4 text-slate-500">
-                <Package className="h-8 w-8" />
-              </div>
-              <h3 className="mt-4 font-bold text-slate-800">
-                {products.length === 0
-                  ? 'Your catalog is empty'
-                  : 'No matching products'}
-              </h3>
-              <p className="mt-1 max-w-md text-sm text-slate-500">
-                {products.length === 0
-                  ? 'Add your first product to make it available in the catalog.'
-                  : 'Try another search term or select a different category.'}
-              </p>
-              {products.length === 0 && (
+
+            <div className="flex flex-wrap gap-3 pt-2">
+              <button
+                type="submit"
+                disabled={savingProduct || isMutating || categoryRecords.length === 0}
+                className="rounded-lg bg-green-700 px-5 py-2.5 font-semibold text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {savingProduct
+                  ? 'Saving...'
+                  : editingProductId
+                    ? 'Save Changes'
+                    : 'Add Product'}
+              </button>
+
+              {editingProductId && (
                 <button
                   type="button"
-                  onClick={openCreateForm}
-                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+                  onClick={resetProductForm}
+                  className="rounded-lg border border-gray-300 px-5 py-2.5 font-semibold text-gray-700 hover:bg-gray-50"
                 >
-                  <Plus className="h-4 w-4" />
-                  Add First Product
+                  Cancel Edit
                 </button>
               )}
             </div>
-          ) : (
-            <>
-              <div className="hidden overflow-x-auto md:block">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="px-5 py-4 font-bold">Product</th>
-                      <th className="px-5 py-4 font-bold">Category</th>
-                      <th className="px-5 py-4 font-bold">Price</th>
-                      <th className="px-5 py-4 font-bold">Unit</th>
-                      <th className="px-5 py-4 text-right font-bold">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredProducts.map((product) => (
-                      <tr
-                        key={product._id ?? product.id}
-                        className="hover:bg-slate-50/70"
-                      >
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-3">
-                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-xl">
-                              {product.icon || '🛒'}
-                            </span>
-                            <div>
-                              <p className="font-semibold text-slate-800">
-                                {product.name}
-                              </p>
-                              <p className="mt-0.5 max-w-xs truncate text-xs text-slate-500">
-                                {product.description || 'No description'}
-                              </p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                            {product.category}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 font-bold text-slate-800">
-                          ₱{Number(product.unitPrice).toFixed(2)}
-                        </td>
-                        <td className="px-5 py-4 text-slate-600">
-                          / {product.unit}
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="flex justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openEditForm(product)}
-                              aria-label={`Edit ${product.name}`}
-                              className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleDelete(product)}
-                              disabled={
-                                deletingId === (product._id ?? product.id)
-                              }
-                              aria-label={`Delete ${product.name}`}
-                              className="rounded-lg border border-slate-200 p-2 text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-50"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          </form>
+        </section>
 
-              <div className="space-y-3 p-4 md:hidden">
-                {filteredProducts.map((product) => (
-                  <article
-                    key={product._id ?? product.id}
-                    className="rounded-2xl border border-slate-200 p-4"
+        <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-5">
+            <h2 className="text-xl font-bold text-gray-900">
+              Category Management
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Create or rename categories to keep the product catalog organized.
+            </p>
+          </div>
+
+          {categoryError && (
+            <p
+              role="alert"
+              className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700"
+            >
+              {categoryError}
+            </p>
+          )}
+
+          {categoryMessage && (
+            <p
+              role="status"
+              className="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700"
+            >
+              {categoryMessage}
+            </p>
+          )}
+
+          <form onSubmit={handleCategorySubmit} className="mb-6 space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  Category Name *
+                </span>
+                <input
+                  required
+                  minLength={2}
+                  maxLength={50}
+                  value={categoryForm.name}
+                  onChange={(event) =>
+                    setCategoryForm((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder="Enter category name"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  Description (optional)
+                </span>
+                <input
+                  maxLength={250}
+                  value={categoryForm.description}
+                  onChange={(event) =>
+                    setCategoryForm((current) => ({
+                      ...current,
+                      description: event.target.value,
+                    }))
+                  }
+                  placeholder="Describe this category"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="submit"
+                disabled={savingCategory}
+                className="rounded-lg bg-green-700 px-5 py-2.5 font-semibold text-white transition hover:bg-green-800 disabled:opacity-50"
+              >
+                {savingCategory
+                  ? 'Saving...'
+                  : editingCategoryId
+                    ? 'Save Category'
+                    : 'Add Category'}
+              </button>
+
+              {editingCategoryId && (
+                <button
+                  type="button"
+                  onClick={resetCategoryForm}
+                  className="rounded-lg border border-gray-300 px-5 py-2.5 font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel Edit
+                </button>
+              )}
+            </div>
+          </form>
+
+          {loadingCategories ? (
+            <p className="py-6 text-center text-gray-500">
+              Loading categories...
+            </p>
+          ) : categoryRecords.length === 0 ? (
+            <p className="py-6 text-center text-gray-500">
+              No categories found. Add your first category above.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-gray-500">
+                    <th className="px-3 py-3 font-semibold">Category</th>
+                    <th className="px-3 py-3 font-semibold">Description</th>
+                    <th className="px-3 py-3 text-right font-semibold">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {categoryRecords.map((category) => (
+                    <tr
+                      key={category.id || category._id}
+                      className="border-b border-gray-100 last:border-0"
+                    >
+                      <td className="px-3 py-4 font-medium text-gray-900">
+                        {category.name}
+                      </td>
+                      <td className="px-3 py-4 text-gray-600">
+                        {category.description || '—'}
+                      </td>
+                      <td className="px-3 py-4">
+                        <div className="flex justify-end gap-3">
+                          <button
+                            type="button"
+                            onClick={() => startCategoryEdit(category)}
+                            className="font-medium text-blue-700 hover:text-blue-900"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleCategoryDelete(category)}
+                            className="font-medium text-red-600 hover:text-red-800"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">
+                Product Catalog
+              </h2>
+              <p className="mt-1 text-sm text-gray-500">
+                Edit prices, update details, or remove products from the catalog.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search products..."
+                className="rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+              />
+
+              <select
+                value={selectedCategory}
+                onChange={(event) => setSelectedCategory(event.target.value)}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2.5 outline-none focus:border-green-600 focus:ring-2 focus:ring-green-100"
+              >
+                <option value="All">All Categories</option>
+                {categoryRecords.map((category) => (
+                  <option
+                    key={category.id || category._id}
+                    value={category.name}
                   >
-                    <div className="flex items-start gap-3">
-                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-xl">
-                        {product.icon || '🛒'}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="font-bold text-slate-800">
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {loading ? (
+            <p className="py-10 text-center text-gray-500">
+              Loading catalog...
+            </p>
+          ) : visibleProducts.length === 0 ? (
+            <p className="py-10 text-center text-gray-500">
+              No products match your search.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-gray-500">
+                    <th className="px-3 py-3 font-semibold">Product</th>
+                    <th className="px-3 py-3 font-semibold">Category</th>
+                    <th className="px-3 py-3 font-semibold">Unit</th>
+                    <th className="px-3 py-3 text-right font-semibold">
+                      Unit Price
+                    </th>
+                    <th className="px-3 py-3 text-right font-semibold">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleProducts.map((product) => (
+                    <tr
+                      key={product.id || product._id}
+                      className="border-b border-gray-100 last:border-0"
+                    >
+                      <td className="px-3 py-4">
+                        <div className="font-medium text-gray-900">
+                          {product.icon ? `${product.icon} ` : ''}
                           {product.name}
-                        </h3>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {product.category}
-                        </p>
-                        <p className="mt-2 font-bold text-emerald-700">
-                          ₱{Number(product.unitPrice).toFixed(2)} / {product.unit}
-                        </p>
+                        </div>
                         {product.description && (
-                          <p className="mt-1 text-sm text-slate-500">
+                          <p className="mt-1 max-w-xs text-xs text-gray-500">
                             {product.description}
                           </p>
                         )}
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex gap-2 border-t border-slate-100 pt-3">
-                      <button
-                        type="button"
-                        onClick={() => openEditForm(product)}
-                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
-                      >
-                        <Pencil className="h-4 w-4" />
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDelete(product)}
-                        disabled={
-                          deletingId === (product._id ?? product.id)
-                        }
-                        className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 disabled:opacity-50"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </>
-          )}
-
-          {!loading && products.length > 0 && (
-            <div className="border-t border-slate-100 px-5 py-4 text-xs text-slate-500">
-              Showing {filteredProducts.length} of {products.length} products
+                      </td>
+                      <td className="px-3 py-4 text-gray-600">
+                        {product.category}
+                      </td>
+                      <td className="px-3 py-4 text-gray-600">
+                        {product.unit}
+                      </td>
+                      <td className="px-3 py-4 text-right font-medium text-gray-900">
+                        ₱{product.unitPrice.toFixed(2)}
+                      </td>
+                      <td className="px-3 py-4">
+                        <div className="flex justify-end gap-3">
+                          <button
+                            type="button"
+                            onClick={() => startProductEdit(product)}
+                            className="font-medium text-blue-700 hover:text-blue-900"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleProductDelete(product)}
+                            className="font-medium text-red-600 hover:text-red-800"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
       </div>
-    </div>
+    </main>
   );
-};
+}
+
+export default AdminProductsPage;

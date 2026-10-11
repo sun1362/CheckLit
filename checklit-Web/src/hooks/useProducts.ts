@@ -1,127 +1,168 @@
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { Product, ProductCategory } from '../types';
-import { PRODUCT_CATEGORIES } from '../types';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Category, Product } from '../types';
 import { apiService, getApiErrorMessage } from '../services/api';
 
-type ProductInput = Omit<
+type NewProduct = Pick<
   Product,
-  'id' | '_id' | 'createdAt' | 'updatedAt'
->;
+  'name' | 'category' | 'unitPrice' | 'unit'
+> &
+  Partial<Pick<Product, 'icon' | 'description'>>;
 
 export function useProducts() {
   const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [categoryRecords, setCategoryRecords] = useState<Category[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [loadingCategories, setLoadingCategories] = useState(true);
+  const [isMutating, setIsMutating] = useState(false);
+  const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] =
-    useState<ProductCategory | 'All'>('All');
+  const [selectedCategory, setSelectedCategory] = useState('All');
 
-  const fetchProducts = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const fetchProducts = useCallback(async (): Promise<Product[]> => {
+    setLoadingProducts(true);
+    setError('');
 
     try {
       const data = await apiService.getProducts();
       setProducts(data);
+      return data;
     } catch (err) {
-      const message = getApiErrorMessage(
-        err,
-        'Failed to load products.'
-      );
-      setError(message);
-      throw new Error(message);
+      setError(getApiErrorMessage(err, 'Unable to load products.'));
+      throw err;
     } finally {
-      setLoading(false);
+      setLoadingProducts(false);
+    }
+  }, []);
+
+  const fetchCategories = useCallback(async (): Promise<Category[]> => {
+    setLoadingCategories(true);
+    setError('');
+
+    try {
+      const data = await apiService.getCategories();
+      setCategoryRecords(data);
+      return data;
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Unable to load categories.'));
+      throw err;
+    } finally {
+      setLoadingCategories(false);
     }
   }, []);
 
   useEffect(() => {
-    let active = true;
+    void fetchProducts().catch(() => undefined);
+    void fetchCategories().catch(() => undefined);
+  }, [fetchProducts, fetchCategories]);
 
-    const loadProducts = async () => {
-      setLoading(true);
-      setError(null);
+  const categories = useMemo(() => {
+    const names = categoryRecords
+      .map((category) => category.name)
+      .filter((name) => name.trim() !== '')
+      .filter(
+        (name, index, namesList) =>
+          namesList.findIndex(
+            (candidate) => candidate.toLowerCase() === name.toLowerCase()
+          ) === index
+      );
+
+    return ['All', ...names];
+  }, [categoryRecords]);
+
+  const filteredProducts = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    return products.filter((product) => {
+      const matchesCategory =
+        selectedCategory === 'All' ||
+        product.category.toLowerCase() === selectedCategory.toLowerCase();
+
+      const searchableText = [
+        product.name,
+        product.category,
+        product.description ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      const matchesSearch =
+        query.length === 0 || searchableText.includes(query);
+
+      return matchesCategory && matchesSearch;
+    });
+  }, [products, searchQuery, selectedCategory]);
+
+  const createProduct = useCallback(
+    async (newProduct: NewProduct): Promise<Product> => {
+      setIsMutating(true);
+      setError('');
+      setSuccessMessage('');
 
       try {
-        const data = await apiService.getProducts();
+        const createdProduct = await apiService.addProduct(newProduct);
 
-        if (active) {
-          setProducts(data);
-        }
-      } catch (err) {
-        if (active) {
-          setError(
-            getApiErrorMessage(err, 'Failed to load products.')
+        setProducts((current) => {
+          const exists = current.some(
+            (product) => product.id === createdProduct.id
           );
-        }
+
+          return exists
+            ? current.map((product) =>
+                product.id === createdProduct.id ? createdProduct : product
+              )
+            : [createdProduct, ...current];
+        });
+
+        setSuccessMessage('Product created successfully.');
+        return createdProduct;
+      } catch (err) {
+        setError(getApiErrorMessage(err, 'Unable to create product.'));
+        throw err;
       } finally {
-        if (active) {
-          setLoading(false);
-        }
+        setIsMutating(false);
       }
-    };
+    },
+    []
+  );
 
-    void loadProducts();
+  const updateProduct = useCallback(
+    async (
+      id: string,
+      updates: Partial<Product>
+    ): Promise<Product> => {
+      setIsMutating(true);
+      setError('');
+      setSuccessMessage('');
 
-    return () => {
-      active = false;
-    };
-  }, []);
+      try {
+        const updatedProduct = await apiService.updateProduct(id, updates);
 
-  const createProduct = async (newProduct: ProductInput) => {
-    setError(null);
+        setProducts((current) =>
+          current.map((product) =>
+            product.id === id || product._id === id
+              ? updatedProduct
+              : product
+          )
+        );
 
-    try {
-      const created = await apiService.addProduct(newProduct);
+        setSuccessMessage('Product updated successfully.');
+        return updatedProduct;
+      } catch (err) {
+        setError(getApiErrorMessage(err, 'Unable to update product.'));
+        throw err;
+      } finally {
+        setIsMutating(false);
+      }
+    },
+    []
+  );
 
-      setProducts((current) =>
-        [...current, created].sort((a, b) =>
-          a.name.localeCompare(b.name)
-        )
-      );
-
-      return created;
-    } catch (err) {
-      const message = getApiErrorMessage(
-        err,
-        'Failed to create product.'
-      );
-      setError(message);
-      throw new Error(message);
-    }
-  };
-
-  const updateProduct = async (
-    id: string,
-    updatedFields: Partial<Product>
-  ) => {
-    setError(null);
-
-    try {
-      const updated = await apiService.updateProduct(id, updatedFields);
-
-      setProducts((current) =>
-        current.map((product) =>
-          product.id === id || product._id === id
-            ? updated
-            : product
-        )
-      );
-
-      return updated;
-    } catch (err) {
-      const message = getApiErrorMessage(
-        err,
-        'Failed to update product.'
-      );
-      setError(message);
-      throw new Error(message);
-    }
-  };
-
-  const deleteProduct = async (id: string) => {
-    setError(null);
+  const deleteProduct = useCallback(async (id: string): Promise<boolean> => {
+    setIsMutating(true);
+    setError('');
+    setSuccessMessage('');
 
     try {
       await apiService.deleteProduct(id);
@@ -131,53 +172,43 @@ export function useProducts() {
           (product) => product.id !== id && product._id !== id
         )
       );
+
+      setSuccessMessage('Product deleted successfully.');
+      return true;
     } catch (err) {
-      const message = getApiErrorMessage(
-        err,
-        'Failed to delete product.'
-      );
-      setError(message);
-      throw new Error(message);
+      setError(getApiErrorMessage(err, 'Unable to delete product.'));
+      throw err;
+    } finally {
+      setIsMutating(false);
     }
-  };
+  }, []);
 
-  const filteredProducts = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-
-    return products.filter((product) => {
-      const matchesCategory =
-        selectedCategory === 'All' ||
-        product.category === selectedCategory;
-
-      const matchesSearch =
-        !query ||
-        product.name.toLowerCase().includes(query) ||
-        product.category.toLowerCase().includes(query) ||
-        (product.description ?? '').toLowerCase().includes(query);
-
-      return matchesCategory && matchesSearch;
-    });
-  }, [products, searchQuery, selectedCategory]);
-
-  const categories: (ProductCategory | 'All')[] = [
-    'All',
-    ...PRODUCT_CATEGORIES,
-  ];
+  const clearMessages = useCallback(() => {
+    setError('');
+    setSuccessMessage('');
+  }, []);
 
   return {
     products,
     filteredProducts,
-    loading,
-    error,
+    categories,
+    categoryRecords,
     searchQuery,
     setSearchQuery,
     selectedCategory,
     setSelectedCategory,
-    categories,
+    loading: loadingProducts || loadingCategories,
+    loadingProducts,
+    loadingCategories,
+    isMutating,
+    error,
+    successMessage,
+    fetchProducts,
+    fetchCategories,
     createProduct,
+    addCustomProduct: createProduct,
     updateProduct,
     deleteProduct,
-    addCustomProduct: createProduct,
-    fetchProducts,
+    clearMessages,
   };
 }
