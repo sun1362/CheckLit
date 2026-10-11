@@ -4,8 +4,8 @@ This is the React frontend for CheckLit, a shopping-list and budget-tracking web
 
 ## Group Members
 
-Carl Michael Toribio - Backend (Handled Express and Connection to React).
-Shawn Allen Rubin - Frontend (Handled React and Made UI).
+- Carl Michael Toribio - Backend (Handled Express and Connection to React).
+- Shawn Allen Rubin - Frontend (Handled React and Made UI).
 
 Replace these placeholders with the actual group members and their contributions before submission.
 
