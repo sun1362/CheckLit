@@ -109,7 +109,7 @@ export const CreateListPage = () => {
   } = useForm<ShoppingListFormValues>({
     resolver: zodResolver(shoppingListSchema),
     defaultValues: defaultListFormValues,
-    mode: 'onBlur',
+    mode: 'onChange',
   });
 
   const budget = watch('budget');

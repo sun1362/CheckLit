@@ -67,7 +67,7 @@ export function AdminProductsPage() {
   } = useForm<ProductFormValues>({
     resolver: zodResolver(productFormSchema),
     defaultValues: defaultProductValues,
-    mode: 'onBlur',
+    mode: 'onChange',
   });
 
   const [editingProductId, setEditingProductId] = useState('');
@@ -82,7 +82,7 @@ export function AdminProductsPage() {
   } = useForm<CategoryFormValues>({
     resolver: zodResolver(categoryFormSchema),
     defaultValues: defaultCategoryValues,
-    mode: 'onBlur',
+    mode: 'onChange',
   });
 
   const [editingCategoryId, setEditingCategoryId] = useState('');
