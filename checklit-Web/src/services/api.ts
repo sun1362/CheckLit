@@ -1,9 +1,13 @@
 import axios from 'axios';
 import type { ShoppingList, Product } from '../types';
-import { INITIAL_PRODUCTS, INITIAL_SHOPPING_LISTS } from '../data/mockProducts';
+import {
+  INITIAL_PRODUCTS,
+  INITIAL_SHOPPING_LISTS,
+} from '../data/mockProducts';
 
 // Single configured axios instance with baseURL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -24,7 +28,11 @@ const getStoredLists = (): ShoppingList[] => {
   } catch (e) {
     console.error('Error reading lists from localStorage', e);
   }
-  localStorage.setItem(LOCAL_STORAGE_LISTS_KEY, JSON.stringify(INITIAL_SHOPPING_LISTS));
+
+  localStorage.setItem(
+    LOCAL_STORAGE_LISTS_KEY,
+    JSON.stringify(INITIAL_SHOPPING_LISTS)
+  );
   return INITIAL_SHOPPING_LISTS;
 };
 
@@ -43,7 +51,11 @@ const getStoredProducts = (): Product[] => {
   } catch (e) {
     console.error('Error reading products from localStorage', e);
   }
-  localStorage.setItem(LOCAL_STORAGE_PRODUCTS_KEY, JSON.stringify(INITIAL_PRODUCTS));
+
+  localStorage.setItem(
+    LOCAL_STORAGE_PRODUCTS_KEY,
+    JSON.stringify(INITIAL_PRODUCTS)
+  );
   return INITIAL_PRODUCTS;
 };
 
@@ -55,9 +67,18 @@ const setStoredProducts = (products: Product[]): void => {
   }
 };
 
-// API Service Methods (Attempting Backend API with seamless Local Storage fallback)
+// Helper to match frontend IDs and MongoDB IDs
+const matchesProductId = (product: Product, id: string): boolean => {
+  const productWithMongoId = product as Product & { _id?: string };
+  return product.id === id || productWithMongoId._id === id;
+};
+
+// API Service Methods
+// Attempts the backend API first, then falls back to LocalStorage.
+
 export const apiService = {
   // --- Shopping Lists CRUD ---
+
   async getLists(): Promise<ShoppingList[]> {
     try {
       const response = await apiClient.get<ShoppingList[]>('/lists');
@@ -66,7 +87,7 @@ export const apiService = {
         return response.data;
       }
     } catch {
-      // Fallback
+      // Fall back to LocalStorage
     }
     return getStoredLists();
   },
@@ -76,13 +97,16 @@ export const apiService = {
       const response = await apiClient.get<ShoppingList>(`/lists/${id}`);
       if (response.data) return response.data;
     } catch {
-      // Fallback
+      // Fall back to LocalStorage
     }
+
     const lists = getStoredLists();
-    return lists.find((l) => l.id === id || l._id === id) || null;
+    return lists.find((list) => list.id === id || list._id === id) || null;
   },
 
-  async createList(newList: Omit<ShoppingList, 'id' | 'createdAt' | 'updatedAt'>): Promise<ShoppingList> {
+  async createList(
+    newList: Omit<ShoppingList, 'id' | 'createdAt' | 'updatedAt'>
+  ): Promise<ShoppingList> {
     const listToCreate: ShoppingList = {
       ...newList,
       id: `list-${Date.now()}`,
@@ -98,7 +122,7 @@ export const apiService = {
         return response.data;
       }
     } catch {
-      // Fallback
+      // Fall back to LocalStorage
     }
 
     const stored = getStoredLists();
@@ -107,37 +131,48 @@ export const apiService = {
     return listToCreate;
   },
 
-  async updateList(id: string, updatedFields: Partial<ShoppingList>): Promise<ShoppingList> {
+  async updateList(
+    id: string,
+    updatedFields: Partial<ShoppingList>
+  ): Promise<ShoppingList> {
     try {
-      const response = await apiClient.put<ShoppingList>(`/lists/${id}`, updatedFields);
+      const response = await apiClient.put<ShoppingList>(
+        `/lists/${id}`,
+        updatedFields
+      );
+
       if (response.data) {
         const stored = getStoredLists();
-        const updatedList = stored.map((l) => (l.id === id || l._id === id ? response.data : l));
-        setStoredLists(updatedList);
+        const updatedLists = stored.map((list) =>
+          list.id === id || list._id === id ? response.data : list
+        );
+        setStoredLists(updatedLists);
         return response.data;
       }
     } catch {
-      // Fallback
+      // Fall back to LocalStorage
     }
 
     const stored = getStoredLists();
     let updatedItem: ShoppingList | null = null;
-    const updatedLists = stored.map((l) => {
-      if (l.id === id || l._id === id) {
+
+    const updatedLists = stored.map((list) => {
+      if (list.id === id || list._id === id) {
         updatedItem = {
-          ...l,
+          ...list,
           ...updatedFields,
           updatedAt: new Date().toISOString(),
         };
         return updatedItem;
       }
-      return l;
+      return list;
     });
 
     if (updatedItem) {
       setStoredLists(updatedLists);
       return updatedItem;
     }
+
     throw new Error('List not found to update');
   },
 
@@ -145,15 +180,19 @@ export const apiService = {
     try {
       await apiClient.delete(`/lists/${id}`);
     } catch {
-      // Fallback
+      // Fall back to LocalStorage
     }
+
     const stored = getStoredLists();
-    const filtered = stored.filter((l) => l.id !== id && l._id !== id);
+    const filtered = stored.filter(
+      (list) => list.id !== id && list._id !== id
+    );
     setStoredLists(filtered);
     return true;
   },
 
   // --- Products Catalog CRUD ---
+
   async getProducts(): Promise<Product[]> {
     try {
       const response = await apiClient.get<Product[]>('/products');
@@ -162,7 +201,7 @@ export const apiService = {
         return response.data;
       }
     } catch {
-      // Fallback
+      // Fall back to LocalStorage
     }
     return getStoredProducts();
   },
@@ -181,11 +220,78 @@ export const apiService = {
         return response.data;
       }
     } catch {
-      // Fallback
+      // Fall back to LocalStorage
     }
 
     const stored = getStoredProducts();
     setStoredProducts([...stored, product]);
     return product;
-  }
+  },
+
+  async updateProduct(
+    id: string,
+    updatedFields: Partial<Product>
+  ): Promise<Product> {
+    try {
+      const response = await apiClient.put<Product>(
+        `/products/${id}`,
+        updatedFields
+      );
+
+      if (response.data) {
+        const stored = getStoredProducts();
+        const updatedProducts = stored.map((product) =>
+          matchesProductId(product, id) ? response.data : product
+        );
+        setStoredProducts(updatedProducts);
+        return response.data;
+      }
+    } catch {
+      // Fall back to LocalStorage
+    }
+
+    const stored = getStoredProducts();
+    let updatedProduct: Product | null = null;
+
+    const updatedProducts = stored.map((product) => {
+      if (matchesProductId(product, id)) {
+        updatedProduct = { ...product, ...updatedFields };
+        return updatedProduct;
+      }
+      return product;
+    });
+
+    if (updatedProduct) {
+      setStoredProducts(updatedProducts);
+      return updatedProduct;
+    }
+
+    throw new Error('Product not found to update');
+  },
+
+  async deleteProduct(id: string): Promise<boolean> {
+    try {
+      await apiClient.delete(`/products/${id}`);
+
+      const stored = getStoredProducts();
+      setStoredProducts(
+        stored.filter((product) => !matchesProductId(product, id))
+      );
+      return true;
+    } catch {
+      // Fall back to LocalStorage
+    }
+
+    const stored = getStoredProducts();
+    const filtered = stored.filter(
+      (product) => !matchesProductId(product, id)
+    );
+
+    if (filtered.length === stored.length) {
+      throw new Error('Product not found to delete');
+    }
+
+    setStoredProducts(filtered);
+    return true;
+  },
 };
