@@ -1,79 +1,114 @@
-import React, { useState } from 'react';
+
+import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingBag, Lock, Mail, AlertCircle } from 'lucide-react';
+import {
+  apiService,
+  clearAuthSession,
+  getApiErrorMessage,
+} from '../services/api';
 
-export const LoginPage: React.FC = () => {
+const GUEST_MODE_KEY = 'checklit_guest_mode';
+
+export const LoginPage = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password) {
-      setError('Please provide valid email and password credentials.');
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!email.trim() || !password) {
+      setError('Please enter your email address and password.');
       return;
     }
+
     setError(null);
     setIsSubmitting(true);
-    setTimeout(() => {
+
+    try {
+      await apiService.login(email, password);
+      sessionStorage.removeItem(GUEST_MODE_KEY);
+      navigate('/', { replace: true });
+    } catch (err) {
+      setError(getApiErrorMessage(err, 'Unable to sign in.'));
+    } finally {
       setIsSubmitting(false);
-      navigate('/');
-    }, 600);
+    }
   };
 
   const handleGuestLogin = () => {
-    navigate('/');
+    clearAuthSession();
+    sessionStorage.setItem(GUEST_MODE_KEY, 'true');
+    navigate('/', { replace: true });
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xl p-8 max-w-md w-full space-y-6">
-
-        {/* Header Logo */}
-        <div className="text-center space-y-2">
-          <div className="w-14 h-14 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
-            <ShoppingBag className="w-8 h-8" />
+    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-10">
+      <section className="w-full max-w-md space-y-6 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+        <div className="space-y-2 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+            <ShoppingBag size={30} />
           </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Welcome Back</h1>
-          <p className="text-slate-500 text-xs">Sign in to manage your grocery shopping lists and budgets</p>
+          <h1 className="text-2xl font-bold text-slate-900">Welcome to CheckLit</h1>
+          <p className="text-sm text-slate-500">
+            Sign in to manage your shopping lists and budgets.
+          </p>
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-xs font-medium flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+          >
+            <AlertCircle size={18} className="mt-0.5 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">Email Address</label>
+          <div className="space-y-1.5">
+            <label htmlFor="login-email" className="text-sm font-medium text-slate-700">
+              Email Address
+            </label>
             <div className="relative">
-              <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+              <Mail
+                size={18}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
               <input
+                id="login-email"
                 type="email"
+                autoComplete="email"
                 required
-                placeholder="user@checklit.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@example.com"
+                className="w-full rounded-lg border border-slate-300 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
               />
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">Password</label>
+          <div className="space-y-1.5">
+            <label htmlFor="login-password" className="text-sm font-medium text-slate-700">
+              Password
+            </label>
             <div className="relative">
-              <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+              <Lock
+                size={18}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
               <input
+                id="login-password"
                 type="password"
+                autoComplete="current-password"
                 required
-                placeholder="••••••••"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Enter your password"
+                className="w-full rounded-lg border border-slate-300 py-2.5 pl-10 pr-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
               />
             </div>
           </div>
@@ -81,29 +116,29 @@ export const LoginPage: React.FC = () => {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md transition-all"
+            className="w-full rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isSubmitting ? 'Signing In...' : 'Sign In'}
+            {isSubmitting ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
 
-        <div className="pt-2 border-t border-slate-100 flex flex-col gap-3 text-center">
+        <div className="space-y-4 border-t border-slate-100 pt-4">
           <button
+            type="button"
             onClick={handleGuestLogin}
-            className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors"
+            className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
           >
-            Continue as Guest / Demo Mode
+            Continue as Guest
           </button>
 
-          <p className="text-xs text-slate-500">
+          <p className="text-center text-sm text-slate-500">
             Don't have an account?{' '}
-            <Link to="/register" className="text-emerald-600 font-bold hover:underline">
-              Register here
+            <Link to="/register" className="font-semibold text-emerald-700 hover:underline">
+              Register
             </Link>
           </p>
         </div>
-
-      </div>
-    </div>
+      </section>
+    </main>
   );
 };

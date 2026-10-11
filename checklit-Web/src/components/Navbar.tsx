@@ -1,134 +1,224 @@
-import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { ShoppingBag, PlusCircle, LayoutDashboard, Store, BarChart2, User, Menu, X, CheckSquare } from 'lucide-react';
 
-export const Navbar: React.FC = () => {
-  const location = useLocation();
+import { useState } from 'react';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
+import {
+  ShoppingBag,
+  Home,
+  Package,
+  BarChart3,
+  UserRound,
+  Info,
+  LogIn,
+  UserPlus,
+  LogOut,
+  ShieldCheck,
+  Menu,
+  X,
+} from 'lucide-react';
+import {
+  clearAuthSession,
+  getAuthToken,
+  getAuthUser,
+} from '../services/api';
+
+export function Navbar() {
+  const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const isActive = (path: string) => {
-    return location.pathname === path
-      ? 'text-emerald-600 bg-emerald-50 font-semibold'
-      : 'text-slate-600 hover:text-emerald-600 hover:bg-slate-50 font-medium';
-  };
+  const token = getAuthToken();
+  const user = getAuthUser();
+  const isAuthenticated = Boolean(token && user);
+  const isAdmin = isAuthenticated && user?.role === 'admin';
 
-  const navLinks = [
-    { name: 'Home', path: '/', icon: LayoutDashboard },
-    { name: 'Products Catalog', path: '/products', icon: Store },
-    { name: 'Analytics', path: '/analytics', icon: BarChart2 },
-    { name: 'About', path: '/about', icon: CheckSquare },
+  const links = [
+    { to: '/', label: 'Home', icon: Home },
+    { to: '/products', label: 'Products', icon: Package },
+    ...(isAuthenticated
+      ? [{ to: '/analytics', label: 'Analytics', icon: BarChart3 }]
+      : []),
+    { to: '/about', label: 'About', icon: Info },
+    ...(isAuthenticated
+      ? [{ to: '/profile', label: 'Profile', icon: UserRound }]
+      : []),
+    ...(isAdmin
+      ? [{ to: '/admin/products', label: 'Manage Catalog', icon: ShieldCheck }]
+      : []),
   ];
 
+  const linkClass = ({ isActive }: { isActive: boolean }) =>
+    `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+      isActive
+        ? 'bg-emerald-50 text-emerald-700'
+        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+    }`;
+
+  const handleLogout = () => {
+    if (!window.confirm('Are you sure you want to log out?')) return;
+
+    clearAuthSession();
+    setMobileMenuOpen(false);
+    navigate('/login', { replace: true });
+  };
+
+  const handleGuestExit = () => {
+    if (
+      !window.confirm(
+        'Exit guest mode? Your temporary shopping lists will be lost. Download any lists you want to keep before leaving.'
+      )
+    ) {
+      return;
+    }
+
+    sessionStorage.removeItem('checklit_guest_shopping_lists_v1');
+    setMobileMenuOpen(false);
+    navigate('/login', { replace: true });
+  };
+
   return (
-    <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-xs">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
+      <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
+        <Link
+          to="/"
+          onClick={() => setMobileMenuOpen(false)}
+          className="flex shrink-0 items-center gap-2"
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white">
+            <ShoppingBag size={20} />
+          </span>
+          <span className="text-lg font-bold tracking-tight text-slate-900">
+            CheckLit
+          </span>
+        </Link>
 
-          {/* Logo */}
-          <Link to="/" className="flex items-center gap-2.5 group">
-            <div className="p-2 bg-gradient-to-tr from-emerald-600 to-teal-500 rounded-xl text-white shadow-md shadow-emerald-200 group-hover:scale-105 transition-transform">
-              <ShoppingBag className="w-6 h-6" />
-            </div>
-            <div>
-              <span className="text-xl font-black bg-gradient-to-r from-emerald-700 via-teal-600 to-emerald-900 bg-clip-text text-transparent tracking-tight">
-                CheckLit
+        <nav className="hidden items-center gap-1 lg:flex">
+          {links.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              className={linkClass}
+            >
+              <Icon size={16} />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="hidden items-center gap-2 lg:flex">
+          {isAuthenticated ? (
+            <>
+              <span className="max-w-36 truncate text-sm text-slate-600">
+                {user?.name}
               </span>
-              <span className="hidden sm:inline-block ml-1.5 text-xs font-semibold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full">
-                Grocery Calc
-              </span>
-            </div>
-          </Link>
-
-          {/* Desktop Navigation Links */}
-          <nav className="hidden md:flex items-center space-x-1">
-            {navLinks.map((link) => {
-              const Icon = link.icon;
-              return (
-                <Link
-                  key={link.path}
-                  to={link.path}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm transition-all ${isActive(
-                    link.path
-                  )}`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {link.name}
-                </Link>
-              );
-            })}
-          </nav>
-
-          {/* Action Buttons & Auth */}
-          <div className="hidden md:flex items-center gap-3">
-            <Link
-              to="/create"
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold text-sm rounded-xl shadow-md shadow-emerald-200 hover:shadow-lg transition-all active:scale-95"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>Create List</span>
-            </Link>
-
-            <Link
-              to="/login"
-              className="p-2 text-slate-600 hover:text-emerald-600 hover:bg-slate-100 rounded-xl transition-colors"
-              title="User Account"
-            >
-              <User className="w-5 h-5" />
-            </Link>
-          </div>
-
-          {/* Mobile menu button */}
-          <div className="md:hidden flex items-center gap-2">
-            <Link
-              to="/create"
-              className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white font-semibold text-xs rounded-lg shadow-xs"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>Create</span>
-            </Link>
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 text-slate-600 rounded-lg hover:bg-slate-100"
-            >
-              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <LogOut size={16} />
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={handleGuestExit}
+                className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+              >
+                Exit Guest
+              </button>
+              <Link
+                to="/login"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              >
+                <LogIn size={16} />
+                Login
+              </Link>
+              <Link
+                to="/register"
+                className="flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                <UserPlus size={16} />
+                Register
+              </Link>
+            </>
+          )}
         </div>
+
+        <button
+          type="button"
+          aria-label={mobileMenuOpen ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={mobileMenuOpen}
+          onClick={() => setMobileMenuOpen((open) => !open)}
+          className="rounded-lg p-2 text-slate-700 hover:bg-slate-100 lg:hidden"
+        >
+          {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+        </button>
       </div>
 
-      {/* Mobile menu */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-t border-slate-100 bg-white px-4 pt-2 pb-4 space-y-1 shadow-lg">
-          {navLinks.map((link) => {
-            const Icon = link.icon;
-            return (
-              <Link
-                key={link.path}
-                to={link.path}
+        <div className="border-t border-slate-200 bg-white px-4 py-4 lg:hidden">
+          <nav className="flex flex-col gap-1">
+            {links.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={to === '/'}
                 onClick={() => setMobileMenuOpen(false)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-base font-medium ${
-                  location.pathname === link.path
-                    ? 'text-emerald-600 bg-emerald-50 font-semibold'
-                    : 'text-slate-700 hover:bg-slate-50'
-                }`}
+                className={linkClass}
               >
-                <Icon className="w-5 h-5" />
-                {link.name}
-              </Link>
-            );
-          })}
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-            <Link
-              to="/login"
-              onClick={() => setMobileMenuOpen(false)}
-              className="flex items-center gap-2 text-sm font-medium text-slate-700 px-3 py-2"
-            >
-              <User className="w-4 h-4 text-emerald-600" />
-              <span>Login / Account</span>
-            </Link>
+                <Icon size={18} />
+                <span>{label}</span>
+              </NavLink>
+            ))}
+          </nav>
+
+          <div className="mt-4 border-t border-slate-200 pt-4">
+            {isAuthenticated ? (
+              <div className="space-y-3">
+                <p className="truncate text-sm text-slate-600">
+                  Signed in as {user?.name}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <LogOut size={16} />
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <Link
+                  to="/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700"
+                >
+                  <LogIn size={16} />
+                  Login
+                </Link>
+                <Link
+                  to="/register"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
+                >
+                  <UserPlus size={16} />
+                  Register
+                </Link>
+                <button
+                  type="button"
+                  onClick={handleGuestExit}
+                  className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+                >
+                  Exit Guest
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
     </header>
   );
-};
+}

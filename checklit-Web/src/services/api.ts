@@ -1,297 +1,569 @@
-import axios from 'axios';
-import type { ShoppingList, Product } from '../types';
-import {
-  INITIAL_PRODUCTS,
-  INITIAL_SHOPPING_LISTS,
-} from '../data/mockProducts';
 
-// Single configured axios instance with baseURL
+import axios from 'axios';
+import type {
+  ApiMessageResponse,
+  AuthResponse,
+  AuthUser,
+  Product,
+  ProductCategory,
+  ShoppingItem,
+  ShoppingList,
+  ShoppingListStatus,
+} from '../types';
+import { PRODUCT_CATEGORIES } from '../types';
+
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+
+export const AUTH_TOKEN_KEY = 'checklit_auth_token';
+export const AUTH_USER_KEY = 'checklit_auth_user';
+
+const GUEST_LISTS_KEY = 'checklit_guest_shopping_lists_v1';
+
+type UnknownRecord = Record<string, unknown>;
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 5000,
+  timeout: 10000,
 });
 
-// LocalStorage Persistence Helpers
-const LOCAL_STORAGE_LISTS_KEY = 'checklit_shopping_lists_v1';
-const LOCAL_STORAGE_PRODUCTS_KEY = 'checklit_products_v1';
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
 
-const getStoredLists = (): ShoppingList[] => {
+export function getAuthUser(): AuthUser | null {
   try {
-    const data = localStorage.getItem(LOCAL_STORAGE_LISTS_KEY);
-    if (data) return JSON.parse(data);
-  } catch (e) {
-    console.error('Error reading lists from localStorage', e);
+    const raw = localStorage.getItem(AUTH_USER_KEY);
+
+    if (!raw) return null;
+
+    const value = JSON.parse(raw) as Partial<AuthUser>;
+
+    if (
+      typeof value.id !== 'string' ||
+      typeof value.name !== 'string' ||
+      typeof value.email !== 'string' ||
+      (value.role !== 'user' && value.role !== 'admin')
+    ) {
+      return null;
+    }
+
+    return {
+      id: value.id,
+      name: value.name,
+      email: value.email,
+      role: value.role,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthSession(token: string, user: AuthUser): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+}
+
+export function clearAuthSession(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
+}
+
+apiClient.interceptors.request.use((config) => {
+  const token = getAuthToken();
+
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  } else {
+    delete config.headers.Authorization;
   }
 
-  localStorage.setItem(
-    LOCAL_STORAGE_LISTS_KEY,
-    JSON.stringify(INITIAL_SHOPPING_LISTS)
+  return config;
+});
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    if (
+      axios.isAxiosError(error) &&
+      error.response?.status === 401 &&
+      !error.config?.url?.includes('/auth/login') &&
+      !error.config?.url?.includes('/auth/register')
+    ) {
+      clearAuthSession();
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+export function getApiErrorMessage(
+  error: unknown,
+  fallback = 'Something went wrong. Please try again.'
+): string {
+  if (axios.isAxiosError(error)) {
+    const response = error.response?.data as
+      | { message?: unknown; error?: unknown }
+      | undefined;
+
+    if (typeof response?.message === 'string') {
+      return response.message;
+    }
+
+    if (typeof response?.error === 'string') {
+      return response.error;
+    }
+
+    if (error.code === 'ECONNABORTED') {
+      return 'The server took too long to respond. Please try again.';
+    }
+
+    if (!error.response) {
+      return 'Unable to reach the CheckLit server. Check that the backend is running.';
+    }
+
+    return error.message || fallback;
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallback;
+}
+
+function asRecord(value: unknown): UnknownRecord {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as UnknownRecord;
+  }
+
+  return {};
+}
+
+function asString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const result = Number(value);
+  return Number.isFinite(result) ? result : fallback;
+}
+
+function normalizeCategory(value: unknown): ProductCategory {
+  const category = asString(value);
+
+  return PRODUCT_CATEGORIES.find((item) => item === category) ?? 'Other';
+}
+
+function deriveListStatus(items: ShoppingItem[]): ShoppingListStatus {
+  if (items.length === 0) return 'Pending';
+
+  const completedCount = items.filter((item) => item.completed).length;
+
+  if (completedCount === 0) return 'Pending';
+  if (completedCount === items.length) return 'Completed';
+
+  return 'In Progress';
+}
+
+function normalizeAuthResponse(value: unknown): AuthResponse {
+  const raw = asRecord(value);
+  const rawUser = asRecord(raw.user);
+  const id = asString(rawUser.id, asString(rawUser._id));
+  const token = asString(raw.token);
+  const role = rawUser.role;
+
+  if (
+    !id ||
+    !token ||
+    !asString(rawUser.name) ||
+    !asString(rawUser.email) ||
+    (role !== 'user' && role !== 'admin')
+  ) {
+    throw new Error('The server returned an invalid authentication response.');
+  }
+
+  const user: AuthUser = {
+    id,
+    name: asString(rawUser.name),
+    email: asString(rawUser.email),
+    role,
+  };
+
+  return {
+    message: asString(raw.message),
+    token,
+    user,
+  };
+}
+
+function normalizeProduct(value: unknown): Product {
+  const raw = asRecord(value);
+  const id = asString(raw.id, asString(raw._id));
+
+  if (!id) {
+    throw new Error('The server returned a product without an ID.');
+  }
+
+  return {
+    id,
+    ...(raw._id ? { _id: asString(raw._id) } : {}),
+    name: asString(raw.name),
+    category: normalizeCategory(raw.category),
+    unitPrice: asNumber(raw.unitPrice),
+    unit: asString(raw.unit),
+    icon: asString(raw.icon),
+    description: asString(raw.description),
+    ...(typeof raw.createdAt === 'string'
+      ? { createdAt: raw.createdAt }
+      : {}),
+    ...(typeof raw.updatedAt === 'string'
+      ? { updatedAt: raw.updatedAt }
+      : {}),
+  };
+}
+
+function normalizeItem(
+  value: unknown,
+  index: number,
+  listId: string
+): ShoppingItem {
+  const raw = asRecord(value);
+  const productId = asString(raw.productId);
+  const name = asString(raw.name, 'Unnamed item');
+  const unitPrice = asNumber(raw.unitPrice);
+  const quantity = asNumber(raw.quantity);
+  const totalPrice =
+    Math.round((unitPrice * quantity + Number.EPSILON) * 100) / 100;
+
+  const suppliedId = asString(raw.id, asString(raw._id));
+  const id =
+    suppliedId ||
+    `${listId}-item-${index}-${productId || name.toLowerCase().replace(/\s+/g, '-')}`;
+
+  return {
+    id,
+    ...(productId ? { productId } : {}),
+    name,
+    category: normalizeCategory(raw.category),
+    unitPrice,
+    quantity,
+    unit: asString(raw.unit),
+    totalPrice,
+    completed: raw.completed === true,
+    purchaseDate:
+      typeof raw.purchaseDate === 'string' ? raw.purchaseDate : null,
+  };
+}
+
+function normalizeList(value: unknown): ShoppingList {
+  const raw = asRecord(value);
+  const id = asString(raw.id, asString(raw._id));
+
+  if (!id) {
+    throw new Error('The server returned a shopping list without an ID.');
+  }
+
+  const rawItems = Array.isArray(raw.items) ? raw.items : [];
+  const items = rawItems.map((item, index) =>
+    normalizeItem(item, index, id)
   );
-  return INITIAL_SHOPPING_LISTS;
-};
 
-const setStoredLists = (lists: ShoppingList[]): void => {
+  const totalCost =
+    Math.round(
+      (items.reduce((sum, item) => sum + item.totalPrice, 0) +
+        Number.EPSILON) *
+        100
+    ) / 100;
+
+  const createdAt = asString(raw.createdAt, new Date().toISOString());
+
+  return {
+    id,
+    ...(raw._id ? { _id: asString(raw._id) } : {}),
+    title: asString(raw.title),
+    store: asString(raw.store),
+    targetDate: asString(raw.targetDate),
+    budget: asNumber(raw.budget),
+    notes: asString(raw.notes),
+    items,
+    totalCost,
+    status: deriveListStatus(items),
+    createdAt,
+    updatedAt: asString(raw.updatedAt, createdAt),
+  };
+}
+
+function getGuestLists(): ShoppingList[] {
   try {
-    localStorage.setItem(LOCAL_STORAGE_LISTS_KEY, JSON.stringify(lists));
-  } catch (e) {
-    console.error('Error writing lists to localStorage', e);
+    const raw = sessionStorage.getItem(GUEST_LISTS_KEY);
+
+    if (!raw) return [];
+
+    const parsed: unknown = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.map(normalizeList);
+  } catch {
+    return [];
   }
-};
+}
 
-const getStoredProducts = (): Product[] => {
-  try {
-    const data = localStorage.getItem(LOCAL_STORAGE_PRODUCTS_KEY);
-    if (data) return JSON.parse(data);
-  } catch (e) {
-    console.error('Error reading products from localStorage', e);
+function saveGuestLists(lists: ShoppingList[]): void {
+  sessionStorage.setItem(GUEST_LISTS_KEY, JSON.stringify(lists));
+}
+
+function createGuestId(): string {
+  return `guest-list-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function matchesListId(list: ShoppingList, id: string): boolean {
+  return list.id === id || list._id === id;
+}
+
+function prepareItemPayload(item: ShoppingItem) {
+  return {
+    productId: item.productId ?? '',
+    name: item.name,
+    category: item.category,
+    unitPrice: item.unitPrice,
+    quantity: item.quantity,
+    unit: item.unit,
+    completed: item.completed,
+  };
+}
+
+function prepareListPayload(
+  fields: Partial<ShoppingList>
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+
+  const allowedFields: (keyof ShoppingList)[] = [
+    'title',
+    'store',
+    'targetDate',
+    'budget',
+    'notes',
+    'items',
+    'status',
+  ];
+
+  for (const field of allowedFields) {
+    if (!Object.prototype.hasOwnProperty.call(fields, field)) continue;
+
+    if (field === 'items' && Array.isArray(fields.items)) {
+      payload.items = fields.items.map(prepareItemPayload);
+      payload.status = deriveListStatus(fields.items);
+    } else if (field === 'status' && Array.isArray(fields.items)) {
+      continue;
+    } else {
+      payload[field] = fields[field];
+    }
   }
 
-  localStorage.setItem(
-    LOCAL_STORAGE_PRODUCTS_KEY,
-    JSON.stringify(INITIAL_PRODUCTS)
-  );
-  return INITIAL_PRODUCTS;
-};
-
-const setStoredProducts = (products: Product[]): void => {
-  try {
-    localStorage.setItem(LOCAL_STORAGE_PRODUCTS_KEY, JSON.stringify(products));
-  } catch (e) {
-    console.error('Error writing products to localStorage', e);
-  }
-};
-
-// Helper to match frontend IDs and MongoDB IDs
-const matchesProductId = (product: Product, id: string): boolean => {
-  const productWithMongoId = product as Product & { _id?: string };
-  return product.id === id || productWithMongoId._id === id;
-};
-
-// API Service Methods
-// Attempts the backend API first, then falls back to LocalStorage.
+  return payload;
+}
 
 export const apiService = {
-  // --- Shopping Lists CRUD ---
+  async login(email: string, password: string): Promise<AuthResponse> {
+    const response = await apiClient.post<unknown>('/auth/login', {
+      email: email.trim().toLowerCase(),
+      password,
+    });
+
+    const auth = normalizeAuthResponse(response.data);
+    setAuthSession(auth.token, auth.user);
+
+    return auth;
+  },
+
+  async register(
+    name: string,
+    email: string,
+    password: string
+  ): Promise<AuthResponse> {
+    const response = await apiClient.post<unknown>('/auth/register', {
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      password,
+    });
+
+    const auth = normalizeAuthResponse(response.data);
+    setAuthSession(auth.token, auth.user);
+
+    return auth;
+  },
 
   async getLists(): Promise<ShoppingList[]> {
-    try {
-      const response = await apiClient.get<ShoppingList[]>('/lists');
-      if (response.data && Array.isArray(response.data)) {
-        setStoredLists(response.data);
-        return response.data;
-      }
-    } catch {
-      // Fall back to LocalStorage
+    if (!getAuthToken()) {
+      return getGuestLists();
     }
-    return getStoredLists();
+
+    const response = await apiClient.get<unknown[]>('/lists');
+
+    if (!Array.isArray(response.data)) {
+      throw new Error('The server returned an invalid shopping-list response.');
+    }
+
+    return response.data.map(normalizeList);
   },
 
   async getListById(id: string): Promise<ShoppingList | null> {
-    try {
-      const response = await apiClient.get<ShoppingList>(`/lists/${id}`);
-      if (response.data) return response.data;
-    } catch {
-      // Fall back to LocalStorage
+    if (!getAuthToken()) {
+      return getGuestLists().find((list) => matchesListId(list, id)) ?? null;
     }
 
-    const lists = getStoredLists();
-    return lists.find((list) => list.id === id || list._id === id) || null;
+    try {
+      const response = await apiClient.get<unknown>(`/lists/${id}`);
+      return normalizeList(response.data);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return null;
+      }
+
+      throw error;
+    }
   },
 
   async createList(
-    newList: Omit<ShoppingList, 'id' | 'createdAt' | 'updatedAt'>
+    newList: Omit<
+      ShoppingList,
+      'id' | '_id' | 'createdAt' | 'updatedAt'
+    >
   ): Promise<ShoppingList> {
-    const listToCreate: ShoppingList = {
-      ...newList,
-      id: `list-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const payload = prepareListPayload(newList);
 
-    try {
-      const response = await apiClient.post<ShoppingList>('/lists', newList);
-      if (response.data) {
-        const stored = getStoredLists();
-        setStoredLists([response.data, ...stored]);
-        return response.data;
-      }
-    } catch {
-      // Fall back to LocalStorage
+    if (getAuthToken()) {
+      const response = await apiClient.post<unknown>('/lists', payload);
+      return normalizeList(response.data);
     }
 
-    const stored = getStoredLists();
-    const updated = [listToCreate, ...stored];
-    setStoredLists(updated);
-    return listToCreate;
+    const now = new Date().toISOString();
+    const guestList = normalizeList({
+      ...payload,
+      id: createGuestId(),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    saveGuestLists([guestList, ...getGuestLists()]);
+
+    return guestList;
   },
 
   async updateList(
     id: string,
     updatedFields: Partial<ShoppingList>
   ): Promise<ShoppingList> {
-    try {
-      const response = await apiClient.put<ShoppingList>(
-        `/lists/${id}`,
-        updatedFields
-      );
+    const payload = prepareListPayload(updatedFields);
 
-      if (response.data) {
-        const stored = getStoredLists();
-        const updatedLists = stored.map((list) =>
-          list.id === id || list._id === id ? response.data : list
-        );
-        setStoredLists(updatedLists);
-        return response.data;
-      }
-    } catch {
-      // Fall back to LocalStorage
+    if (getAuthToken()) {
+      const response = await apiClient.put<unknown>(`/lists/${id}`, payload);
+      return normalizeList(response.data);
     }
 
-    const stored = getStoredLists();
-    let updatedItem: ShoppingList | null = null;
+    const lists = getGuestLists();
+    const index = lists.findIndex((list) => matchesListId(list, id));
 
-    const updatedLists = stored.map((list) => {
-      if (list.id === id || list._id === id) {
-        updatedItem = {
-          ...list,
-          ...updatedFields,
-          updatedAt: new Date().toISOString(),
-        };
-        return updatedItem;
-      }
-      return list;
+    if (index === -1) {
+      throw new Error('Guest shopping list not found.');
+    }
+
+    const current = lists[index];
+    const updated = normalizeList({
+      ...current,
+      ...payload,
+      id: current.id,
+      _id: current._id,
+      updatedAt: new Date().toISOString(),
     });
 
-    if (updatedItem) {
-      setStoredLists(updatedLists);
-      return updatedItem;
-    }
+    const nextLists = [...lists];
+    nextLists[index] = updated;
+    saveGuestLists(nextLists);
 
-    throw new Error('List not found to update');
+    return updated;
   },
 
   async deleteList(id: string): Promise<boolean> {
-    try {
+    if (getAuthToken()) {
       await apiClient.delete(`/lists/${id}`);
-    } catch {
-      // Fall back to LocalStorage
+      return true;
     }
 
-    const stored = getStoredLists();
-    const filtered = stored.filter(
-      (list) => list.id !== id && list._id !== id
-    );
-    setStoredLists(filtered);
+    const lists = getGuestLists();
+    const nextLists = lists.filter((list) => !matchesListId(list, id));
+
+    if (nextLists.length === lists.length) {
+      throw new Error('Guest shopping list not found.');
+    }
+
+    saveGuestLists(nextLists);
     return true;
   },
 
-  // --- Products Catalog CRUD ---
-
   async getProducts(): Promise<Product[]> {
-    try {
-      const response = await apiClient.get<Product[]>('/products');
-      if (response.data && Array.isArray(response.data)) {
-        setStoredProducts(response.data);
-        return response.data;
-      }
-    } catch {
-      // Fall back to LocalStorage
+    const response = await apiClient.get<unknown[]>('/products');
+
+    if (!Array.isArray(response.data)) {
+      throw new Error('The server returned an invalid product response.');
     }
-    return getStoredProducts();
+
+    return response.data.map(normalizeProduct);
   },
 
-  async addProduct(newProduct: Omit<Product, 'id'>): Promise<Product> {
-    const product: Product = {
-      ...newProduct,
-      id: `p-${Date.now()}`,
-    };
-
+  async getProductById(id: string): Promise<Product | null> {
     try {
-      const response = await apiClient.post<Product>('/products', newProduct);
-      if (response.data) {
-        const stored = getStoredProducts();
-        setStoredProducts([...stored, response.data]);
-        return response.data;
+      const response = await apiClient.get<unknown>(`/products/${id}`);
+      return normalizeProduct(response.data);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return null;
       }
-    } catch {
-      // Fall back to LocalStorage
-    }
 
-    const stored = getStoredProducts();
-    setStoredProducts([...stored, product]);
-    return product;
+      throw error;
+    }
+  },
+
+  async addProduct(
+    newProduct: Omit<Product, 'id' | '_id'>
+  ): Promise<Product> {
+    const response = await apiClient.post<unknown>('/products', newProduct);
+    return normalizeProduct(response.data);
   },
 
   async updateProduct(
     id: string,
     updatedFields: Partial<Product>
   ): Promise<Product> {
-    try {
-      const response = await apiClient.put<Product>(
-        `/products/${id}`,
-        updatedFields
-      );
+    const payload: Record<string, unknown> = {};
 
-      if (response.data) {
-        const stored = getStoredProducts();
-        const updatedProducts = stored.map((product) =>
-          matchesProductId(product, id) ? response.data : product
-        );
-        setStoredProducts(updatedProducts);
-        return response.data;
+    const allowedFields: (keyof Product)[] = [
+      'name',
+      'category',
+      'unitPrice',
+      'unit',
+      'icon',
+      'description',
+    ];
+
+    for (const field of allowedFields) {
+      if (Object.prototype.hasOwnProperty.call(updatedFields, field)) {
+        payload[field] = updatedFields[field];
       }
-    } catch {
-      // Fall back to LocalStorage
     }
 
-    const stored = getStoredProducts();
-    let updatedProduct: Product | null = null;
+    const response = await apiClient.put<unknown>(`/products/${id}`, payload);
 
-    const updatedProducts = stored.map((product) => {
-      if (matchesProductId(product, id)) {
-        updatedProduct = { ...product, ...updatedFields };
-        return updatedProduct;
-      }
-      return product;
-    });
-
-    if (updatedProduct) {
-      setStoredProducts(updatedProducts);
-      return updatedProduct;
-    }
-
-    throw new Error('Product not found to update');
+    return normalizeProduct(response.data);
   },
 
   async deleteProduct(id: string): Promise<boolean> {
-    try {
-      await apiClient.delete(`/products/${id}`);
-
-      const stored = getStoredProducts();
-      setStoredProducts(
-        stored.filter((product) => !matchesProductId(product, id))
-      );
-      return true;
-    } catch {
-      // Fall back to LocalStorage
-    }
-
-    const stored = getStoredProducts();
-    const filtered = stored.filter(
-      (product) => !matchesProductId(product, id)
-    );
-
-    if (filtered.length === stored.length) {
-      throw new Error('Product not found to delete');
-    }
-
-    setStoredProducts(filtered);
+    await apiClient.delete<ApiMessageResponse>(`/products/${id}`);
     return true;
   },
 };

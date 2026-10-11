@@ -1,13 +1,55 @@
-export type ProductCategory = 'Vegetables' | 'Fruits' | 'Meat & Seafood' | 'Seasonings & Oils' | 'Dairy & Bakery' | 'Snacks & Beverages' | 'Other';
+
+export const PRODUCT_CATEGORIES = [
+  'Vegetables',
+  'Fruits',
+  'Meat',
+  'Seafood',
+  'Seasonings',
+  'Oils',
+  'Dairy',
+  'Bakery',
+  'Snacks',
+  'Beverage',
+  'Other',
+] as const;
+
+export type ProductCategory = string;
+
+export const SHOPPING_LIST_STATUSES = [
+  'Pending',
+  'In Progress',
+  'Completed',
+] as const;
+
+export type ShoppingListStatus =
+  (typeof SHOPPING_LIST_STATUSES)[number];
+
+export type UserRole = 'user' | 'admin';
+
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+}
+
+export interface AuthResponse {
+  message: string;
+  token: string;
+  user: AuthUser;
+}
 
 export interface Product {
   id: string;
+  _id?: string;
   name: string;
   category: ProductCategory;
   unitPrice: number;
-  unit: string; // e.g. "kg", "lb", "pack", "bottle", "piece"
+  unit: string;
   icon?: string;
   description?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ShoppingItem {
@@ -18,8 +60,9 @@ export interface ShoppingItem {
   unitPrice: number;
   quantity: number;
   unit: string;
-  totalPrice: number; // calculated unitPrice * quantity
+  totalPrice: number;
   completed: boolean;
+  purchaseDate?: string | null;
 }
 
 export interface ShoppingList {
@@ -31,8 +74,8 @@ export interface ShoppingList {
   budget: number;
   notes?: string;
   items: ShoppingItem[];
-  totalCost: number; // calculated sum of item totalPrices
-  status: 'Pending' | 'In Progress' | 'Completed';
+  totalCost: number;
+  status: ShoppingListStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,12 +83,23 @@ export interface ShoppingList {
 export interface UserProfile {
   name: string;
   email: string;
-  currency: string;
-  defaultBudget: number;
+  currency?: string;
+  defaultBudget?: number;
 }
 
 export interface CategorySummary {
   category: ProductCategory;
   itemCount: number;
   totalAmount: number;
+}
+
+export interface ApiMessageResponse {
+  message: string;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
 }

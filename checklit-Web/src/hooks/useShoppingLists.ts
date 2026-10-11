@@ -1,110 +1,308 @@
+
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { ShoppingList } from '../types';
-import { apiService } from '../services/api';
+import type { ShoppingItem, ShoppingList, ShoppingListStatus } from '../types';
+import { apiService, getApiErrorMessage } from '../services/api';
+
+type NewShoppingList = Omit<
+  ShoppingList,
+  'id' | '_id' | 'createdAt' | 'updatedAt'
+>;
+
+function calculateItemTotal(item: ShoppingItem): number {
+  return Math.round((item.unitPrice * item.quantity + Number.EPSILON) * 100) / 100;
+}
+
+function calculateListTotal(items: ShoppingItem[]): number {
+  return Math.round(
+    (items.reduce((total, item) => total + calculateItemTotal(item), 0) +
+      Number.EPSILON) *
+      100
+  ) / 100;
+}
+
+function calculateListStatus(items: ShoppingItem[]): ShoppingListStatus {
+  if (items.length === 0) {
+    return 'Pending';
+  }
+
+  const purchasedCount = items.filter((item) => item.completed).length;
+
+  if (purchasedCount === 0) {
+    return 'Pending';
+  }
+
+  if (purchasedCount === items.length) {
+    return 'Completed';
+  }
+
+  return 'In Progress';
+}
+
+function normalizeList(list: ShoppingList): ShoppingList {
+  const items = list.items.map((item) => ({
+    ...item,
+    totalPrice: calculateItemTotal(item),
+  }));
+
+  return {
+    ...list,
+    items,
+    totalCost: calculateListTotal(items),
+    status: calculateListStatus(items),
+  };
+}
+
+function matchesListId(list: ShoppingList, id: string): boolean {
+  return list.id === id || list._id === id;
+}
 
 export function useShoppingLists() {
   const [lists, setLists] = useState<ShoppingList[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
+  const [isMutating, setIsMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const fetchLists = useCallback(async () => {
     setLoading(true);
     setError(null);
+
     try {
       const data = await apiService.getLists();
-      setLists(data);
+      setLists(data.map(normalizeList));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch shopping lists.');
+      const message = getApiErrorMessage(
+        err,
+        'Failed to load shopping lists.'
+      );
+      setError(message);
+      throw new Error(message);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchLists();
-  }, [fetchLists]);
+    let active = true;
 
-  const showSuccess = (msg: string) => {
-    setSuccessMessage(msg);
-    setTimeout(() => {
-      setSuccessMessage(null);
-    }, 4000);
-  };
+    const loadLists = async () => {
+      try {
+        const data = await apiService.getLists();
 
-  const createList = async (newListData: Omit<ShoppingList, 'id' | 'createdAt' | 'updatedAt'>) => {
-    setLoading(true);
+        if (active) {
+          setLists(data.map(normalizeList));
+          setError(null);
+        }
+      } catch (err) {
+        if (active) {
+          setError(
+            getApiErrorMessage(err, 'Failed to load shopping lists.')
+          );
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadLists();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const showSuccess = useCallback((message: string) => {
+    setSuccessMessage(message);
+  }, []);
+
+  const clearMessages = useCallback(() => {
     setError(null);
+    setSuccessMessage(null);
+  }, []);
+
+  const createList = async (newListData: NewShoppingList) => {
+    clearMessages();
+    setIsMutating(true);
+
     try {
-      const created = await apiService.createList(newListData);
-      setLists((prev) => [created, ...prev]);
-      showSuccess(`Shopping list "${created.title}" created successfully!`);
-      return created;
+      const normalizedData = normalizeList({
+        ...newListData,
+        id: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      const created = await apiService.createList({
+        ...normalizedData,
+        status: calculateListStatus(normalizedData.items),
+        totalCost: calculateListTotal(normalizedData.items),
+      });
+
+      const normalizedCreated = normalizeList(created);
+
+      setLists((previous) => [
+        normalizedCreated,
+        ...previous.filter(
+          (list) => !matchesListId(list, normalizedCreated.id)
+        ),
+      ]);
+
+      showSuccess(`Shopping list "${normalizedCreated.title}" created.`);
+      return normalizedCreated;
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to create list.';
-      setError(errorMsg);
-      throw new Error(errorMsg);
+      const message = getApiErrorMessage(
+        err,
+        'Failed to create shopping list.'
+      );
+      setError(message);
+      throw new Error(message);
     } finally {
-      setLoading(false);
+      setIsMutating(false);
     }
   };
 
-  const updateList = async (id: string, updatedFields: Partial<ShoppingList>) => {
-    setLoading(true);
-    setError(null);
+  const updateList = async (
+    id: string,
+    updatedFields: Partial<ShoppingList>
+  ) => {
+    clearMessages();
+    setIsMutating(true);
+
     try {
-      const updated = await apiService.updateList(id, updatedFields);
-      setLists((prev) => prev.map((l) => (l.id === id || l._id === id ? updated : l)));
-      showSuccess(`List updated successfully!`);
-      return updated;
+      const existing = lists.find((list) => matchesListId(list, id));
+
+      const nextItems = (
+        updatedFields.items ?? existing?.items ?? []
+      ).map((item) => ({
+        ...item,
+        totalPrice: calculateItemTotal(item),
+      }));
+
+      const payload: Partial<ShoppingList> = {
+        ...updatedFields,
+        items: updatedFields.items ? nextItems : undefined,
+        status: calculateListStatus(nextItems),
+        totalCost: calculateListTotal(nextItems),
+      };
+
+      const updated = await apiService.updateList(id, payload);
+      const normalizedUpdated = normalizeList(updated);
+
+      setLists((previous) =>
+        previous.map((list) =>
+          matchesListId(list, id) ? normalizedUpdated : list
+        )
+      );
+
+      showSuccess(`Shopping list "${normalizedUpdated.title}" updated.`);
+      return normalizedUpdated;
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to update list.';
-      setError(errorMsg);
-      throw new Error(errorMsg);
+      const message = getApiErrorMessage(
+        err,
+        'Failed to update shopping list.'
+      );
+      setError(message);
+      throw new Error(message);
     } finally {
-      setLoading(false);
+      setIsMutating(false);
     }
   };
 
   const deleteList = async (id: string) => {
-    setLoading(true);
-    setError(null);
+    clearMessages();
+    setIsMutating(true);
+
     try {
       await apiService.deleteList(id);
-      setLists((prev) => prev.filter((l) => l.id !== id && l._id !== id));
-      showSuccess(`List deleted successfully.`);
+
+      setLists((previous) =>
+        previous.filter((list) => !matchesListId(list, id))
+      );
+
+      showSuccess('Shopping list deleted successfully.');
       return true;
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to delete list.';
-      setError(errorMsg);
-      throw new Error(errorMsg);
+      const message = getApiErrorMessage(
+        err,
+        'Failed to delete shopping list.'
+      );
+      setError(message);
+      throw new Error(message);
     } finally {
-      setLoading(false);
+      setIsMutating(false);
     }
   };
 
-  const toggleItemCompletion = async (listId: string, itemId: string) => {
-    const targetList = lists.find((l) => l.id === listId || l._id === listId);
-    if (!targetList) return;
-
-    const updatedItems = targetList.items.map((item) =>
-      item.id === itemId ? { ...item, completed: !item.completed } : item
+  const toggleItemCompletion = async (
+    listId: string,
+    itemId: string
+  ) => {
+    const targetList = lists.find((list) =>
+      matchesListId(list, listId)
     );
 
-    const allCompleted = updatedItems.length > 0 && updatedItems.every((i) => i.completed);
-    const newStatus = allCompleted ? 'Completed' : updatedItems.some((i) => i.completed) ? 'In Progress' : 'Pending';
+    if (!targetList) {
+      throw new Error('Shopping list not found.');
+    }
 
-    await updateList(listId, { items: updatedItems, status: newStatus });
+    const targetItem = targetList.items.find(
+      (item) => item.id === itemId
+    );
+
+    if (!targetItem) {
+      throw new Error('Shopping list item not found.');
+    }
+
+    const updatedItems = targetList.items.map((item) =>
+      item.id === itemId
+        ? {
+            ...item,
+            completed: !item.completed,
+            totalPrice: calculateItemTotal(item),
+          }
+        : item
+    );
+
+    return updateList(listId, {
+      items: updatedItems,
+      status: calculateListStatus(updatedItems),
+      totalCost: calculateListTotal(updatedItems),
+    });
   };
 
-  // Dynamic Derived Calculations (computed during render without redundant state)
   const stats = useMemo(() => {
     const totalListsCount = lists.length;
-    const totalSpent = lists.reduce((acc, l) => acc + l.totalCost, 0);
-    const activeListsCount = lists.filter((l) => l.status !== 'Completed').length;
-    const completedListsCount = lists.filter((l) => l.status === 'Completed').length;
-    const totalItemsCount = lists.reduce((acc, l) => acc + l.items.reduce((iAcc, item) => iAcc + item.quantity, 0), 0);
-    const averageListCost = totalListsCount > 0 ? totalSpent / totalListsCount : 0;
+
+    const activeListsCount = lists.filter(
+      (list) => calculateListStatus(list.items) !== 'Completed'
+    ).length;
+
+    const completedListsCount = lists.filter(
+      (list) => calculateListStatus(list.items) === 'Completed'
+    ).length;
+
+    const totalSpent = lists.reduce(
+      (total, list) =>
+        total +
+        list.items
+          .filter((item) => item.completed)
+          .reduce((itemTotal, item) => itemTotal + item.totalPrice, 0),
+      0
+    );
+
+    const totalItemsCount = lists.reduce(
+      (total, list) =>
+        total + list.items.reduce((quantity, item) => quantity + item.quantity, 0),
+      0
+    );
+
+    const averageListCost =
+      totalListsCount > 0
+        ? lists.reduce((total, list) => total + list.totalCost, 0) /
+          totalListsCount
+        : 0;
 
     return {
       totalListsCount,
@@ -119,6 +317,7 @@ export function useShoppingLists() {
   return {
     lists,
     loading,
+    isMutating,
     error,
     successMessage,
     fetchLists,
@@ -127,5 +326,6 @@ export function useShoppingLists() {
     deleteList,
     toggleItemCompletion,
     stats,
+    clearMessages,
   };
 }

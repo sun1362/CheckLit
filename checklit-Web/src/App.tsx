@@ -1,4 +1,13 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+
+import { type ReactNode } from 'react';
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  Outlet,
+  useLocation,
+} from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { HomePage } from './pages/home';
@@ -11,32 +20,134 @@ import { RegisterPage } from './pages/register';
 import { ProfilePage } from './pages/profile';
 import { AboutPage } from './pages/about';
 import { NotFoundPage } from './pages/notFound';
+import { AdminProductsPage } from './pages/adminProducts';
+import { getAuthToken, getAuthUser } from './services/api';
+
+const GUEST_MODE_KEY = 'checklit_guest_mode';
+
+function hasAuthenticatedSession() {
+  return Boolean(getAuthToken() && getAuthUser());
+}
+
+function hasGuestSession() {
+  return sessionStorage.getItem(GUEST_MODE_KEY) === 'true';
+}
+
+function hasActiveSession() {
+  return hasAuthenticatedSession() || hasGuestSession();
+}
+
+function GuestOrAuthenticatedRoute() {
+  const location = useLocation();
+
+  if (!hasActiveSession()) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname }}
+      />
+    );
+  }
+
+  return <Outlet />;
+}
+
+function AuthenticatedRoute() {
+  const location = useLocation();
+
+  if (!hasAuthenticatedSession()) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname }}
+      />
+    );
+  }
+
+  return <Outlet />;
+}
+
+function AdminRoute() {
+  if (!hasAuthenticatedSession()) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (getAuthUser()?.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
+  return <Outlet />;
+}
+
+function LoginRegisterRoute({ children }: { children: ReactNode }) {
+  if (hasAuthenticatedSession()) {
+    return <Navigate to="/" replace />;
+  }
+
+  return children;
+}
+
+function ApplicationLayout() {
+  return (
+    <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
+      <Navbar />
+      <main className="flex-1">
+        <Outlet />
+      </main>
+      <Footer />
+    </div>
+  );
+}
 
 function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans">
-        <Navbar />
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            <LoginRegisterRoute>
+              <LoginPage />
+            </LoginRegisterRoute>
+          }
+        />
 
-        <main className="flex-1">
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/home" element={<Navigate to="/" replace />} />
-            <Route path="/create" element={<CreateListPage />} />
-            <Route path="/edit/:id" element={<CreateListPage />} />
-            <Route path="/list/:id" element={<ListDetailsPage />} />
-            <Route path="/products" element={<ProductsPage />} />
-            <Route path="/analytics" element={<AnalyticsPage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/about" element={<AboutPage />} />
-            <Route path="*" element={<NotFoundPage />} />
-          </Routes>
-        </main>
+        <Route
+          path="/register"
+          element={
+            <LoginRegisterRoute>
+              <RegisterPage />
+            </LoginRegisterRoute>
+          }
+        />
 
-        <Footer />
-      </div>
+        <Route element={<GuestOrAuthenticatedRoute />}>
+          <Route path="/" element={<ApplicationLayout />}>
+            <Route index element={<HomePage />} />
+            <Route path="create" element={<CreateListPage />} />
+            <Route path="edit/:id" element={<CreateListPage />} />
+            <Route path="list/:id" element={<ListDetailsPage />} />
+            <Route path="products" element={<ProductsPage />} />
+            <Route path="about" element={<AboutPage />} />
+
+            <Route element={<AuthenticatedRoute />}>
+              <Route path="analytics" element={<AnalyticsPage />} />
+              <Route path="profile" element={<ProfilePage />} />
+            </Route>
+
+            <Route element={<AdminRoute />}>
+              <Route
+                path="admin/products"
+                element={<AdminProductsPage />}
+              />
+            </Route>
+          </Route>
+        </Route>
+
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
     </BrowserRouter>
   );
 }
